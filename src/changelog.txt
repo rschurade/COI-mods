@@ -1,6 +1,15 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.3
+------
+- Verified against game version 0.8.6.
+- New: a single belt/pipe placement drag can now be much longer than the
+  vanilla ~31 tiles. Longer runs are routed internally as several stitched
+  sections, each still fully validated by the game (collisions, ramps,
+  pillar support, ports). Configurable via TransportPlacementMaxLength
+  (default 128 tiles, min 31 = vanilla behavior, max 512).
+
 v0.9.2
 ------
 - Elevated belts/pipes can now be held up by the supported connectors

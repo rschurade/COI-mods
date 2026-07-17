@@ -26,5 +26,12 @@
     "min": 4,
     "max": 32,
     "description": "Maximum distance, in tiles, that an elevated pipe or belt may be from a supporting pillar (vanilla: 4). Auto-built transport pillars end up roughly twice this far apart. Do not lower this below what existing pipes/belts use or they may collapse."
+  },
+  "TransportPlacementMaxLength": {
+    "default": 128,
+    "is_integer": true,
+    "min": 31,
+    "max": 512,
+    "description": "Maximum length, in tiles, of a single belt/pipe placement drag (vanilla: ~31). Longer runs are routed as several stitched sections internally; each section is still fully validated by the game. Setting 31 restores vanilla behavior."
   }
 }

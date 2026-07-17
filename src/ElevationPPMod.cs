@@ -55,10 +55,12 @@ public sealed class ElevationPPMod : IMod
     private const string CFG_RAIL_SUPPORT = "RailPillarSupportDistance";
     private const string CFG_TRANSPORT_HEIGHT = "TransportPillarMaxHeight";
     private const string CFG_TRANSPORT_SUPPORT = "TransportPillarSupportDistance";
+    private const string CFG_TRANSPORT_SEGMENT = "TransportPlacementMaxLength";
     private const int DEFAULT_RAIL_HEIGHT = 16;
     private const int DEFAULT_RAIL_SUPPORT = 14;
     private const int DEFAULT_TRANSPORT_HEIGHT = 16;
     private const int DEFAULT_TRANSPORT_SUPPORT = 8;
+    private const int DEFAULT_TRANSPORT_SEGMENT = 128;
 
     // Cached so the patches can re-run when the player edits values in the settings UI.
     private ProtosDb m_protosDb;
@@ -81,6 +83,20 @@ public sealed class ElevationPPMod : IMod
     public void RegisterDependencies(DependencyResolverBuilder depBuilder, ProtosDb protosDb, bool gameWasLoaded)
     {
         m_protosDb = protosDb;
+
+        // Replace the transport (belt/pipe) path-finder with a multi-leg router so one placement
+        // drag can reach beyond the vanilla ~31-tile window (TransportPlacementMaxLength).
+        try
+        {
+            depBuilder.RegisterDependency<LongTransportPathFinder>().AsAllInterfaces();
+            depBuilder.SetPreferredImplementationFor(typeof(LongTransportPathFinder),
+                typeof(Mafi.Core.Factory.Transports.ITransportPathFinder));
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to register long transport path-finder: {ex.Message}");
+        }
+
         applyPatches();
     }
 
@@ -137,6 +153,9 @@ public sealed class ElevationPPMod : IMod
         patchStaticPillarHeight(typeof(TransportPillarProto),
             JsonConfig.GetInt(CFG_TRANSPORT_HEIGHT, DEFAULT_TRANSPORT_HEIGHT), "transport");
         patchTransportSupportRadius(JsonConfig.GetInt(CFG_TRANSPORT_SUPPORT, DEFAULT_TRANSPORT_SUPPORT));
+        LongTransportPathFinder.MaxSegmentLength =
+            JsonConfig.GetInt(CFG_TRANSPORT_SEGMENT, DEFAULT_TRANSPORT_SEGMENT);
+        Log.Info($"Elevation++: transport placement max length set to {LongTransportPathFinder.MaxSegmentLength}.");
     }
 
     /// <summary>
