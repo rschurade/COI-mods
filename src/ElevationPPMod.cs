@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Mafi;
 using Mafi.Collections;
 using Mafi.Core;
+using Mafi.Core.Entities.Static;
+using Mafi.Core.Entities.Static.Layout;
 using Mafi.Core.Factory.Transports;
 using Mafi.Core.Game;
 using Mafi.Core.Mods;
@@ -64,6 +67,11 @@ public sealed class ElevationPPMod : IMod
 
     // Cached so the patches can re-run when the player edits values in the settings UI.
     private ProtosDb m_protosDb;
+
+    // Protos whose placement height range was baked from the vanilla transport pillar cap at
+    // registration time (connectors, balancers, sorters, lifts, ...). Collected once, before the
+    // pillar-height constant is first patched, then kept in sync with TransportPillarMaxHeight.
+    private List<LayoutEntityProto> m_transportPlacementProtos;
 
     public ElevationPPMod(ModManifest manifest)
     {
@@ -136,6 +144,72 @@ public sealed class ElevationPPMod : IMod
         {
             Log.Error($"Elevation++: Failed to apply connector-supported transport patch: {ex.Message}");
         }
+
+        // Adds top/bottom ports to pipe connectors so pipes can connect to them vertically.
+        try
+        {
+            VerticalConnectorPortsPatch.TryApply(m_protosDb);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply vertical connector ports patch: {ex.Message}");
+        }
+
+        // Lets a pipe connector be placed directly onto a pipe riser's elbow tile (cut-in without
+        // removing the pipe first); requires the vertical ports patch above.
+        try
+        {
+            VerticalConnectorPlacementPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply elbow connector placement patch: {ex.Message}");
+        }
+
+        // Renders the missing bottom stub on pipe connectors with a vertically connected down port
+        // (the vanilla model only has a stub on top); no-op in headless runs.
+        try
+        {
+            VerticalConnectorStubRenderer.TryInitialize(resolver);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to init vertical connector stub renderer: {ex.Message}");
+        }
+
+        // Shows the green "will connect" port icons when a connector is placed onto an existing
+        // pipe (vanilla renders them red even though the cut-in reconnects exactly those ports);
+        // no-op in headless runs.
+        try
+        {
+            ConnectorPortPreviewPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply connector port preview patch: {ex.Message}");
+        }
+
+        // Shows the connector's top/bottom ports on the placement cursor (the preview only knows
+        // the proto's horizontal port templates); no-op in headless runs.
+        try
+        {
+            VerticalPreviewPortsPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply vertical preview ports patch: {ex.Message}");
+        }
+
+        // Shows the pipe-tool style height tooltip when placing connectors/balancers/sorters/lifts
+        // and elevated stations; no-op in headless runs.
+        try
+        {
+            PlacementHeightPopupPatch.TryInitialize(resolver);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to init placement height popup: {ex.Message}");
+        }
     }
 
     public void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) { }
@@ -150,6 +224,9 @@ public sealed class ElevationPPMod : IMod
         patchStaticPillarHeight(typeof(TrainTrackPillarProto),
             JsonConfig.GetInt(CFG_RAIL_HEIGHT, DEFAULT_RAIL_HEIGHT), "rail");
         patchRailSupportDistance(JsonConfig.GetInt(CFG_RAIL_SUPPORT, DEFAULT_RAIL_SUPPORT));
+        // Must run before the transport pillar-height patch below: on the first run it identifies
+        // the affected protos by the still-vanilla value of MAX_PILLAR_HEIGHT.
+        patchTransportPlacementRanges(JsonConfig.GetInt(CFG_TRANSPORT_HEIGHT, DEFAULT_TRANSPORT_HEIGHT));
         patchStaticPillarHeight(typeof(TransportPillarProto),
             JsonConfig.GetInt(CFG_TRANSPORT_HEIGHT, DEFAULT_TRANSPORT_HEIGHT), "transport");
         patchTransportSupportRadius(JsonConfig.GetInt(CFG_TRANSPORT_SUPPORT, DEFAULT_TRANSPORT_SUPPORT));
@@ -254,6 +331,68 @@ public sealed class ElevationPPMod : IMod
         }
 
         Log.Info($"Elevation++: set transport MaxPillarSupportRadius to {radius} on {count} proto(s).");
+    }
+
+    /// <summary>
+    /// Raises the maximum placement elevation of connectors, balancers, sorters and lifts to match
+    /// TransportPillarMaxHeight. Their layouts bake a placement height range of
+    /// (0, MAX_PILLAR_HEIGHT - 1) at proto registration, which happens before this mod patches the
+    /// constant — so without this they stay capped at the vanilla 5 tiles while pipes/belts go
+    /// higher. Affected protos are identified once by carrying exactly the vanilla-derived range,
+    /// then both the layout's PlacementHeightRange and the proto's VehicleGoalHeightAllowedRange
+    /// (a copy taken by the StaticEntityProto ctor, used to validate construction-vehicle access)
+    /// are updated, and re-updated whenever the config value changes.
+    /// </summary>
+    private void patchTransportPlacementRanges(int maxHeight)
+    {
+        if (m_protosDb == null)
+        {
+            return;
+        }
+
+        FieldInfo layoutField = typeof(EntityLayout).GetField("PlacementHeightRange",
+            BindingFlags.Public | BindingFlags.Instance);
+        FieldInfo protoField = typeof(StaticEntityProto).GetField("VehicleGoalHeightAllowedRange",
+            BindingFlags.Public | BindingFlags.Instance);
+        if (layoutField == null || protoField == null)
+        {
+            Log.Error("Elevation++: PlacementHeightRange/VehicleGoalHeightAllowedRange not found!");
+            return;
+        }
+
+        if (m_transportPlacementProtos == null)
+        {
+            m_transportPlacementProtos = new List<LayoutEntityProto>();
+            int vanillaTo = TransportPillarProto.MAX_PILLAR_HEIGHT.Value - 1;
+            foreach (LayoutEntityProto proto in m_protosDb.All<LayoutEntityProto>())
+            {
+                ThicknessIRange range = proto.Layout.PlacementHeightRange;
+                if (range.From.Value == 0 && range.To.Value == vanillaTo)
+                {
+                    m_transportPlacementProtos.Add(proto);
+                }
+            }
+        }
+
+        var newRange = new ThicknessIRange(0, maxHeight - 1);
+        foreach (LayoutEntityProto proto in m_transportPlacementProtos)
+        {
+            try
+            {
+                layoutField.SetValue(proto.Layout, newRange);
+                if (proto.VehicleGoalHeightAllowedRange.HasValue)
+                {
+                    protoField.SetValue(proto, (ThicknessIRange?)newRange);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Elevation++: Failed to set placement range on '{proto}': {ex.Message}");
+            }
+        }
+
+        Log.Info($"Elevation++: placement height range set to 0..{maxHeight - 1} on "
+            + $"{m_transportPlacementProtos.Count} proto(s) (connectors/balancers/sorters/lifts).");
     }
 
     public void Dispose()

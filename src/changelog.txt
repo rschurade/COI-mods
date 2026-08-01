@@ -1,6 +1,40 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.4
+------
+Vertical pipe connections for pipe connectors:
+- Pipe connectors now have a top and a bottom port, so pipes can connect
+  to them vertically (from above and below), not just from the four
+  horizontal sides. Fluid flows through vertical ports exactly like
+  through horizontal ones. Existing connectors from older saves gain the
+  vertical ports when rebuilt or tier-upgraded.
+- A connector can be cut directly into an existing pipe at a riser's
+  corner (elbow) tile and even into the middle of a vertical run — the
+  pipe splits and reconnects through the connector's vertical ports.
+  (Vanilla refused both with "not flat".) Works from the connector
+  toolbar button and by clicking a 1-tile pipe placement on the pipe.
+- The connector model only has a riser stub on top; when a pipe connects
+  from below, the mod renders a mirrored copy of the stub underneath so
+  the joint looks finished from every side.
+
+Placement quality-of-life (connectors, balancers, sorters, lifts and
+elevated stations):
+- Their maximum placement elevation now follows TransportPillarMaxHeight
+  (previously stuck at the vanilla 5 tiles because the cap is baked into
+  the protos at registration, before the mod raises the pillar height).
+  Connectors now snap onto elevated pipes at any supported height.
+- The pipe tool's small height tooltip is now also shown when placing
+  any of these height-adjustable buildings.
+- Placing a connector onto an existing pipe now shows the green "will
+  connect" icons on the ports that the cut-in will reconnect (vanilla
+  showed them as red/blocked).
+- The placement cursor of a pipe connector now shows its vertical
+  (top/bottom) port arrows, with the same green feedback when a vertical
+  connection will be made; built connectors already showed them. The
+  down-facing port icon is drawn next to the connector instead of two
+  tiles below it.
+
 v0.9.3
 ------
 - Verified against game version 0.8.6.
