@@ -31,8 +31,8 @@ namespace ElevationPP;
 /// ctrl-clicking that block with the vanilla "add/remove pillars" tool now places TWO pillars
 /// beside the elevated track — one left, one right, perpendicular to the track direction — at
 /// the first valid spot on each side, found by sliding outward from the block in half-tile
-/// steps. Shift starts the search snug against the deck (1.5 tiles from the centreline); ctrl
-/// starts one tile further out for a wider portal. Both pillars register under the clicked block's index; the engine's support
+/// steps. The modifier combo picks the stance: shift = the closest valid spot, then ctrl +2,
+/// ctrl+shift +4, alt +6 and alt+shift +8 tiles further out. Both pillars register under the clicked block's index; the engine's support
 /// bookkeeping is keyed purely on block index (never on the pillar's position), so the block
 /// counts as fully supported even though nothing stands directly beneath it. The outward search
 /// is capped at PILLAR_SUPPORT_DISTANCE so the portal can't grow absurd. Works per track, so a
@@ -55,13 +55,10 @@ internal static class SideTrackPillarsPatch
     private const string HARMONY_ID = "com.roest.elevationpp.sidepillars";
 
     // Start the outward search 1.5 tiles from the track centreline — the column tucks right
-    // against (partly under) the deck edge. Ctrl-click goes FarExtraTiles further out than the
-    // closest valid spot (configurable via RailPortalCtrlDistance). Half-tile search steps.
+    // against (partly under) the deck edge. Modifier combos widen the stance beyond the
+    // closest valid spot: shift +0, ctrl +2, ctrl+shift +4, alt +6, alt+shift +8 tiles.
+    // Half-tile search steps.
     private const int MIN_OFFSET_HALF_TILES = 3;
-
-    /// <summary>Extra distance, in tiles, of ctrl-placed portal pillars beyond the closest
-    /// valid spot. Written by the mod's config handling; read on the sim thread.</summary>
-    internal static volatile int FarExtraTiles = 1;
 
     // Recompute the proposal every N sim ticks even when the hovered block is unchanged, so the
     // preview tracks terrain/entity changes.
@@ -110,7 +107,7 @@ internal static class SideTrackPillarsPatch
     {
         public EntityId TrackId;
         public int BlockIdx;
-        public bool Far;
+        public int ExtraTiles;
         public bool Valid;
         // Set when the proposal replaces an existing pillar (hover over a pillar instead of a
         // free track block); ReplacePillarId identifies the hovered pillar.
@@ -125,9 +122,10 @@ internal static class SideTrackPillarsPatch
     private static volatile SideProposal s_proposal;
     private static int s_ticksSinceCompute;
 
-    // Written on the main thread (ctrl = far portal, shift = close), read by the sim-thread
-    // proposal computation.
-    private static volatile bool s_farMode;
+    // Extra stance width in tiles from the held modifier combo (shift 0, ctrl 2, ctrl+shift 4,
+    // alt 6, alt+shift 8). Written on the main thread, read by the sim-thread proposal
+    // computation.
+    private static volatile int s_extraTiles;
 
     /// <summary>
     /// Payload for the next AddTrainTrackPillarCmd; set on the main thread right before
@@ -264,12 +262,13 @@ internal static class SideTrackPillarsPatch
     {
         bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
         bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-        if (ctrl || shift)
+        bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+        if (!ctrl && !shift && !alt)
         {
-            s_farMode = ctrl;
-            return true;
+            return false;
         }
-        return false;
+        s_extraTiles = alt ? (shift ? 8 : 6) : ctrl ? (shift ? 4 : 2) : 0;
+        return true;
     }
 
     private static bool isPointerOverUi()
@@ -523,10 +522,10 @@ internal static class SideTrackPillarsPatch
                     s_proposal = null;
                     return;
                 }
-                bool far = s_farMode;
+                int extraTiles = s_extraTiles;
                 SideProposal current = s_proposal;
                 if (current != null && current.TrackId == track.Id && current.BlockIdx == blockIdx
-                    && current.Far == far && current.Replace == replace
+                    && current.ExtraTiles == extraTiles && current.Replace == replace
                     && current.ReplacePillarId == replacePillarId
                     && ++s_ticksSinceCompute < RECOMPUTE_TICKS)
                 {
@@ -534,7 +533,7 @@ internal static class SideTrackPillarsPatch
                 }
                 s_ticksSinceCompute = 0;
                 var manager = (TrainTracksPillarManager)s_pillarManagerField.GetValue(__instance);
-                s_proposal = computeProposal(track, blockIdx, manager, far, replace, replacePillarId);
+                s_proposal = computeProposal(track, blockIdx, manager, extraTiles, replace, replacePillarId);
             }
             finally
             {
@@ -548,13 +547,13 @@ internal static class SideTrackPillarsPatch
     }
 
     private static SideProposal computeProposal(TrainTrack track, int blockIdx,
-        TrainTracksPillarManager manager, bool far, bool replace, EntityId replacePillarId)
+        TrainTracksPillarManager manager, int extraTiles, bool replace, EntityId replacePillarId)
     {
         var result = new SideProposal
         {
             TrackId = track.Id,
             BlockIdx = blockIdx,
-            Far = far,
+            ExtraTiles = extraTiles,
             Replace = replace,
             ReplacePillarId = replacePillarId,
         };
@@ -576,21 +575,21 @@ internal static class SideTrackPillarsPatch
             return result;
         }
         result.Valid =
-            trySide(track, manager, baseRel, far, left: true,
+            trySide(track, manager, baseRel, extraTiles, left: true,
                 out result.RelLeft, out result.InfoLeft)
-            && trySide(track, manager, baseRel, far, left: false,
+            && trySide(track, manager, baseRel, extraTiles, left: false,
                 out result.RelRight, out result.InfoRight);
         return result;
     }
 
     /// <summary>
-    /// Finds the pillar spot for one side. Close (shift): the first valid spot sliding outward.
-    /// Far (ctrl): one tile beyond the first valid spot — so the extra clearance applies both on
-    /// open ground and after sliding past an obstacle (e.g. the neighbouring track of a dual
-    /// line), keeping the far look consistent.
+    /// Finds the pillar spot for one side: the first valid spot sliding outward, plus the
+    /// modifier combo's extra distance beyond it — so the extra clearance applies both on open
+    /// ground and after sliding past an obstacle (e.g. the neighbouring track of a dual line),
+    /// keeping each stance consistent.
     /// </summary>
     private static bool trySide(TrainTrack track, TrainTracksPillarManager manager,
-        TrainTrackPillarInfoRel baseRel, bool far, bool left,
+        TrainTrackPillarInfoRel baseRel, int extraTiles, bool left,
         out TrainTrackPillarInfoRel rel, out TrainTrackPillarInfo info)
     {
         if (!findSpot(track, manager, baseRel, MIN_OFFSET_HALF_TILES, left,
@@ -598,11 +597,11 @@ internal static class SideTrackPillarsPatch
         {
             return false;
         }
-        if (!far)
+        if (extraTiles <= 0)
         {
             return true;
         }
-        return findSpot(track, manager, baseRel, foundHalfSteps + FarExtraTiles * 2, left,
+        return findSpot(track, manager, baseRel, foundHalfSteps + extraTiles * 2, left,
             out _, out rel, out info);
     }
 
