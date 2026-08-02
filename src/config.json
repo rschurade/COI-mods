@@ -6,6 +6,10 @@
     "max": 30,
     "description": "Maximum height of elevated train-track pillars, in tiles (vanilla: 6). Also raises the rail build cursor cap. Do not lower this below the height of rail pillars already built or they may collapse."
   },
+  "RailBuildHeightAwareSnapping": {
+    "default": true,
+    "description": "When laying track with the cursor raised (arrow keys), hovering an existing track at a different height no longer snaps the cursor (and its height) to that track; snapping to tracks at the matching height still works, and picking at ground level is unchanged. Set to false to restore the vanilla snap-to-any-track behavior."
+  },
   "RailPillarSupportDistance": {
     "default": 14,
     "is_integer": true,

@@ -56,6 +56,7 @@ public sealed class ElevationPPMod : IMod
     // support radius 4 (pillars 2x that = 8 tiles apart).
     private const string CFG_RAIL_HEIGHT = "RailPillarMaxHeight";
     private const string CFG_RAIL_SUPPORT = "RailPillarSupportDistance";
+    private const string CFG_RAIL_SNAP = "RailBuildHeightAwareSnapping";
     private const string CFG_TRANSPORT_HEIGHT = "TransportPillarMaxHeight";
     private const string CFG_TRANSPORT_SUPPORT = "TransportPillarSupportDistance";
     private const string CFG_TRANSPORT_SEGMENT = "TransportPlacementMaxLength";
@@ -64,6 +65,7 @@ public sealed class ElevationPPMod : IMod
     private const int DEFAULT_TRANSPORT_HEIGHT = 16;
     private const int DEFAULT_TRANSPORT_SUPPORT = 8;
     private const int DEFAULT_TRANSPORT_SEGMENT = 128;
+    private const bool DEFAULT_RAIL_SNAP = true;
 
     // Cached so the patches can re-run when the player edits values in the settings UI.
     private ProtosDb m_protosDb;
@@ -235,6 +237,17 @@ public sealed class ElevationPPMod : IMod
             Log.Error($"Elevation++: Failed to apply auto-portal patch: {ex.Message}");
         }
 
+        // Keeps the rail build cursor's manually raised height when hovering tracks at other
+        // heights (RailBuildHeightAwareSnapping); no-op in headless runs.
+        try
+        {
+            TrackSnapHeightPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply height-aware snapping patch: {ex.Message}");
+        }
+
         // Renders a concrete crossbeam between the side pillars of a rail portal; no-op in
         // headless runs.
         try
@@ -268,6 +281,7 @@ public sealed class ElevationPPMod : IMod
         LongTransportPathFinder.MaxSegmentLength =
             JsonConfig.GetInt(CFG_TRANSPORT_SEGMENT, DEFAULT_TRANSPORT_SEGMENT);
         Log.Info($"Elevation++: transport placement max length set to {LongTransportPathFinder.MaxSegmentLength}.");
+        TrackSnapHeightPatch.Enabled = JsonConfig.GetBool(CFG_RAIL_SNAP, DEFAULT_RAIL_SNAP);
     }
 
     /// <summary>
