@@ -223,6 +223,18 @@ public sealed class ElevationPPMod : IMod
             Log.Error($"Elevation++: Failed to apply side track pillars patch: {ex.Message}");
         }
 
+        // Substitutes the portal pair automatically when a NEW track is dragged over a spot
+        // where its centre support pillar cannot stand (e.g. over an existing track), so
+        // stacked lines can be built in any order; builds on the side pillars patch above.
+        try
+        {
+            AutoPortalPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply auto-portal patch: {ex.Message}");
+        }
+
         // Renders a concrete crossbeam between the side pillars of a rail portal; no-op in
         // headless runs.
         try

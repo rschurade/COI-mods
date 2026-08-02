@@ -67,6 +67,10 @@ internal static class SideTrackPillarsPatch
     private static bool s_applied;
     private static bool s_runtimeErrorLogged;
 
+    /// <summary>True once all internals resolved and patches applied; AutoPortalPatch builds on
+    /// the helpers of this class and must not activate without it.</summary>
+    internal static bool IsFunctional { get; private set; }
+
     // TrainTrackPillarBuildController privates.
     private static FieldInfo s_isActiveField;
     private static FieldInfo s_lockField;
@@ -230,6 +234,7 @@ internal static class SideTrackPillarsPatch
                 prefix: new HarmonyMethod(typeof(SideTrackPillarsPatch), nameof(AddPillarCmdPrefix)));
             harmony.Patch(removeInvoke,
                 prefix: new HarmonyMethod(typeof(SideTrackPillarsPatch), nameof(RemovePillarCmdPrefix)));
+            IsFunctional = true;
             Log.Info("Elevation++: side track pillars patch applied.");
         }
         catch (Exception ex)
@@ -575,9 +580,9 @@ internal static class SideTrackPillarsPatch
             return result;
         }
         result.Valid =
-            trySide(track, manager, baseRel, extraTiles, left: true,
+            trySide(track.TrackCenterTile, track.Id, manager, baseRel, extraTiles, left: true,
                 out result.RelLeft, out result.InfoLeft)
-            && trySide(track, manager, baseRel, extraTiles, left: false,
+            && trySide(track.TrackCenterTile, track.Id, manager, baseRel, extraTiles, left: false,
                 out result.RelRight, out result.InfoRight);
         return result;
     }
@@ -588,11 +593,11 @@ internal static class SideTrackPillarsPatch
     /// ground and after sliding past an obstacle (e.g. the neighbouring track of a dual line),
     /// keeping each stance consistent.
     /// </summary>
-    private static bool trySide(TrainTrack track, TrainTracksPillarManager manager,
-        TrainTrackPillarInfoRel baseRel, int extraTiles, bool left,
-        out TrainTrackPillarInfoRel rel, out TrainTrackPillarInfo info)
+    private static bool trySide(Tile3i trackCenter, EntityId exemptTrackId,
+        TrainTracksPillarManager manager, TrainTrackPillarInfoRel baseRel, int extraTiles,
+        bool left, out TrainTrackPillarInfoRel rel, out TrainTrackPillarInfo info)
     {
-        if (!findSpot(track, manager, baseRel, MIN_OFFSET_HALF_TILES, left,
+        if (!findSpot(trackCenter, exemptTrackId, manager, baseRel, MIN_OFFSET_HALF_TILES, left,
             out int foundHalfSteps, out rel, out info))
         {
             return false;
@@ -601,8 +606,103 @@ internal static class SideTrackPillarsPatch
         {
             return true;
         }
-        return findSpot(track, manager, baseRel, foundHalfSteps + extraTiles * 2, left,
-            out _, out rel, out info);
+        return findSpot(trackCenter, exemptTrackId, manager, baseRel,
+            foundHalfSteps + extraTiles * 2, left, out _, out rel, out info);
+    }
+
+    // --------------------------------------------- auto-portal support (used by AutoPortalPatch)
+
+    /// <summary>
+    /// Plan-time feasibility check for a track that does not exist yet (no entity to exempt):
+    /// finds the closest-stance flanking pair for this block, returning the full pillar infos of
+    /// both columns (used to rewrite the plan's pillar list so ghost and build get the real
+    /// pair).
+    /// </summary>
+    internal static bool TryPlanPortalPairInfos(TrainTracksPillarManager manager,
+        Tile3i trackCenter, TrainTrackPillarInfoRel baseRel,
+        out TrainTrackPillarInfo leftInfo, out TrainTrackPillarInfo rightInfo)
+    {
+        leftInfo = default(TrainTrackPillarInfo);
+        rightInfo = default(TrainTrackPillarInfo);
+        if (!IsFunctional || baseRel.Direction.IsZero)
+        {
+            return false;
+        }
+        return trySide(trackCenter, default(EntityId), manager, baseRel, 0, left: true,
+                out _, out leftInfo)
+            && trySide(trackCenter, default(EntityId), manager, baseRel, 0, left: false,
+                out _, out rightInfo);
+    }
+
+    /// <summary>
+    /// Boolean form of <see cref="TryPlanPortalPairInfos"/>: would the pair fit? On success
+    /// returns the left column's height/ground so the caller can report plausible values for the
+    /// (blocked) centre placement it is standing in for.
+    /// </summary>
+    internal static bool TryPlanPortalPair(TrainTracksPillarManager manager, Tile3i trackCenter,
+        TrainTrackPillarInfoRel baseRel, out ThicknessTilesF pillarHeight,
+        out HeightTilesF groundHeight)
+    {
+        if (!TryPlanPortalPairInfos(manager, trackCenter, baseRel,
+            out TrainTrackPillarInfo leftInfo, out _))
+        {
+            pillarHeight = default(ThicknessTilesF);
+            groundHeight = default(HeightTilesF);
+            return false;
+        }
+        pillarHeight = leftInfo.Height;
+        groundHeight = new HeightTilesF(leftInfo.Offset.Z);
+        return true;
+    }
+
+    /// <summary>
+    /// Build-time substitution: places the closest-stance flanking pair for the given block of a
+    /// freshly built track whose planned centre pillar cannot be placed, adopting spanned
+    /// same-level tracks exactly like a portal click. Never leaves half a portal behind.
+    /// </summary>
+    internal static bool TryPlacePortalPair(TrainTracksPillarManager manager, TrainTrack track,
+        TrainTrackPillarInfoRel baseRel, bool isFree, out string error)
+    {
+        error = "Cannot place pillar here";
+        ITrainTrackMayBeElevatedFriend entity = track;
+        if (!IsFunctional || baseRel.Direction.IsZero
+            || (entity.PillarBlocksBitmap & (uint)(1 << baseRel.BlockIndex)) != 0)
+        {
+            return false;
+        }
+        if (!trySide(track.TrackCenterTile, track.Id, manager, baseRel, 0, left: true,
+                out TrainTrackPillarInfoRel relLeft, out _)
+            || !trySide(track.TrackCenterTile, track.Id, manager, baseRel, 0, left: false,
+                out TrainTrackPillarInfoRel relRight, out _))
+        {
+            return false;
+        }
+        if (!tryAddOne(manager, entity, relLeft, isFree,
+            out TrainTrackPillar first, out TrainTrackPillarInfo leftInfo, out error))
+        {
+            return false;
+        }
+        if (!tryAddOne(manager, entity, relRight, isFree,
+            out _, out TrainTrackPillarInfo rightInfo, out error))
+        {
+            if (first != null)
+            {
+                manager.TryRemovePillar(first);
+            }
+            return false;
+        }
+        try
+        {
+            var entitiesManager = (EntitiesManager)s_entitiesManagerField.GetValue(manager);
+            supportSpannedTracks(manager, entity, entitiesManager, leftInfo, rightInfo);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: the new track's own portal is already placed and valid.
+            logOnce(ex);
+        }
+        error = "";
+        return true;
     }
 
     /// <summary>
@@ -612,15 +712,15 @@ internal static class SideTrackPillarsPatch
     /// block, not per position), its relative height (so the pillar top still meets deck level)
     /// and the track-aligned orientation.
     /// </summary>
-    private static bool findSpot(TrainTrack track, TrainTracksPillarManager manager,
-        TrainTrackPillarInfoRel baseRel, int minHalfSteps, bool left, out int foundHalfSteps,
+    private static bool findSpot(Tile3i trackCenter, EntityId exemptTrackId,
+        TrainTracksPillarManager manager, TrainTrackPillarInfoRel baseRel, int minHalfSteps,
+        bool left, out int foundHalfSteps,
         out TrainTrackPillarInfoRel rel, out TrainTrackPillarInfo info)
     {
         foundHalfSteps = -1;
         rel = default(TrainTrackPillarInfoRel);
         info = default(TrainTrackPillarInfo);
         Fix32 maxOffset = TrainTrackConstants.PILLAR_SUPPORT_DISTANCE.Value;
-        Tile3i trackCenter = track.TrackCenterTile;
         // Left orthogonal of the track tangent; the pillar itself stays track-aligned.
         var perpendicular = new RelTile2f(-baseRel.Direction.Y, baseRel.Direction.X);
         for (int halfSteps = minHalfSteps; ; halfSteps++)
@@ -651,7 +751,7 @@ internal static class SideTrackPillarsPatch
             // the crossing the portal exists for; anything in between — where the (future)
             // crossbeam would block trains below or leave a gap above — makes the whole side
             // invalid. The clicked track's own deck is exempt.
-            int deckClass = classifyDecks(manager, track, trackCenter, baseRel, candidate);
+            int deckClass = classifyDecks(manager, exemptTrackId, trackCenter, baseRel, candidate);
             if (deckClass == DECK_CLASH)
             {
                 return false;
@@ -687,9 +787,10 @@ internal static class SideTrackPillarsPatch
     /// when it is ≥3.5 tiles below (a proper crossing underneath, with train clearance under the
     /// portal), and DECK_CLASH for the awkward in-between band and decks slightly above, where a
     /// portal crossbeam could never fit. Mirrors the tile iteration of the vanilla placement
-    /// check; the clicked track itself is ignored.
+    /// check; the clicked track itself (exemptTrackId; may be a default id when the track being
+    /// planned does not exist yet) is ignored.
     /// </summary>
-    private static int classifyDecks(TrainTracksPillarManager manager, TrainTrack clicked,
+    private static int classifyDecks(TrainTracksPillarManager manager, EntityId exemptTrackId,
         Tile3i trackCenter, TrainTrackPillarInfoRel baseRel, TrainTrackPillarInfoRel candidate)
     {
         var terrain = (TerrainManager)s_terrainManagerField.GetValue(manager);
@@ -728,7 +829,7 @@ internal static class SideTrackPillarsPatch
                 while (enumerator.MoveNext())
                 {
                     EntityId occupantId = enumerator.Current;
-                    if (occupantId == clicked.Id)
+                    if (occupantId == exemptTrackId)
                     {
                         continue;
                     }
@@ -791,19 +892,22 @@ internal static class SideTrackPillarsPatch
         s_pending = null;
         try
         {
+            // Keep the auto-portal TryAddPillar substitution out of this manual flow — every add
+            // below is pre-validated, and its failure paths must fail plainly, not recurse.
+            AutoPortalPatch.SuppressSubstitution = true;
             var entitiesManager = (EntitiesManager)s_entitiesManagerField.GetValue(__instance);
             if (!entitiesManager.TryGetEntity(cmd.EntityId, out ITrainTrackMayBeElevatedFriend entity))
             {
                 cmd.SetResultError("Failed to find entity");
                 return false;
             }
-            if (!tryAddOne(__instance, entity, pending.RelLeft,
+            if (!tryAddOne(__instance, entity, pending.RelLeft, entity.IsTrackEnabled,
                 out TrainTrackPillar first, out TrainTrackPillarInfo leftInfo, out string error))
             {
                 cmd.SetResultError(error);
                 return false;
             }
-            if (!tryAddOne(__instance, entity, pending.RelRight,
+            if (!tryAddOne(__instance, entity, pending.RelRight, entity.IsTrackEnabled,
                 out _, out TrainTrackPillarInfo rightInfo, out error))
             {
                 // Never leave half a portal behind.
@@ -832,11 +936,15 @@ internal static class SideTrackPillarsPatch
             cmd.SetResultError("Elevation++: side pillar placement failed.");
             return false;
         }
+        finally
+        {
+            AutoPortalPatch.SuppressSubstitution = false;
+        }
     }
 
     private static bool tryAddOne(TrainTracksPillarManager manager, ITrainTrackMayBeElevatedFriend entity,
-        TrainTrackPillarInfoRel rel, out TrainTrackPillar added, out TrainTrackPillarInfo info,
-        out string error)
+        TrainTrackPillarInfoRel rel, bool isFree, out TrainTrackPillar added,
+        out TrainTrackPillarInfo info, out string error)
     {
         added = null;
         if (!manager.CanPlacePillar(entity.TrackCenterTile, rel,
@@ -849,7 +957,7 @@ internal static class SideTrackPillarsPatch
         info = new TrainTrackPillarInfo(
             entity.TrackCenterTile.Xy.CornerTile2f.ExtendHeight(ground), height, rel);
         int countBefore = entity.Pillars.Length;
-        if (!manager.TryAddPillar(info, entity, entity.IsTrackEnabled, out error))
+        if (!manager.TryAddPillar(info, entity, isFree, out error))
         {
             return false;
         }
@@ -1019,14 +1127,17 @@ internal static class SideTrackPillarsPatch
     /// </summary>
     private static bool RemovePillarCmdPrefix(TrainTracksPillarManager __instance, RemoveTrainTrackPillarCmd cmd)
     {
-        PendingReplace replace = s_pendingReplace;
-        if (replace != null && replace.PillarId == cmd.PillarId)
-        {
-            s_pendingReplace = null;
-            return replacePillarWithPair(__instance, cmd, replace);
-        }
         try
         {
+            // Same suppression as the add prefix: replacement/demolition flows restore or
+            // duplicate pre-validated pillars and must not trigger auto-portal substitution.
+            AutoPortalPatch.SuppressSubstitution = true;
+            PendingReplace replace = s_pendingReplace;
+            if (replace != null && replace.PillarId == cmd.PillarId)
+            {
+                s_pendingReplace = null;
+                return replacePillarWithPair(__instance, cmd, replace);
+            }
             var entitiesManager = (EntitiesManager)s_entitiesManagerField.GetValue(__instance);
             if (!entitiesManager.TryGetEntity(cmd.PillarId, out TrainTrackPillar pillar))
             {
@@ -1074,6 +1185,10 @@ internal static class SideTrackPillarsPatch
         {
             logOnce(ex);
             return true;
+        }
+        finally
+        {
+            AutoPortalPatch.SuppressSubstitution = false;
         }
     }
 
@@ -1190,14 +1305,14 @@ internal static class SideTrackPillarsPatch
                 tryRemoveLogged(manager, old);
             }
 
-            if (!tryAddOne(manager, entity, replace.RelLeft,
+            if (!tryAddOne(manager, entity, replace.RelLeft, entity.IsTrackEnabled,
                 out TrainTrackPillar first, out TrainTrackPillarInfo leftInfo, out string error))
             {
                 restorePillars(manager, entity, backups);
                 cmd.SetResultError(error);
                 return false;
             }
-            if (!tryAddOne(manager, entity, replace.RelRight,
+            if (!tryAddOne(manager, entity, replace.RelRight, entity.IsTrackEnabled,
                 out _, out TrainTrackPillarInfo rightInfo, out error))
             {
                 if (first != null)
