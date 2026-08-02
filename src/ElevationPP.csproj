@@ -61,6 +61,9 @@
 		<Reference Include="UnityEngine.CoreModule">
 			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
 		</Reference>
+		<Reference Include="UnityEngine.InputLegacyModule">
+			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+		</Reference>
 	</ItemGroup>
 
 	<ItemGroup>

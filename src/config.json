@@ -27,6 +27,13 @@
     "max": 32,
     "description": "Maximum distance, in tiles, that an elevated pipe or belt may be from a supporting pillar (vanilla: 4). Auto-built transport pillars end up roughly twice this far apart. Do not lower this below what existing pipes/belts use or they may collapse."
   },
+  "RailPortalCtrlDistance": {
+    "default": 1,
+    "is_integer": true,
+    "min": 1,
+    "max": 8,
+    "description": "How much further out, in tiles, ctrl-click places the side pillars of a rail portal compared to shift-click (which always uses the closest valid spot beside the track)."
+  },
   "TransportPlacementMaxLength": {
     "default": 128,
     "is_integer": true,

@@ -59,11 +59,13 @@ public sealed class ElevationPPMod : IMod
     private const string CFG_TRANSPORT_HEIGHT = "TransportPillarMaxHeight";
     private const string CFG_TRANSPORT_SUPPORT = "TransportPillarSupportDistance";
     private const string CFG_TRANSPORT_SEGMENT = "TransportPlacementMaxLength";
+    private const string CFG_PORTAL_CTRL_DISTANCE = "RailPortalCtrlDistance";
     private const int DEFAULT_RAIL_HEIGHT = 16;
     private const int DEFAULT_RAIL_SUPPORT = 14;
     private const int DEFAULT_TRANSPORT_HEIGHT = 16;
     private const int DEFAULT_TRANSPORT_SUPPORT = 8;
     private const int DEFAULT_TRANSPORT_SEGMENT = 128;
+    private const int DEFAULT_PORTAL_CTRL_DISTANCE = 1;
 
     // Cached so the patches can re-run when the player edits values in the settings UI.
     private ProtosDb m_protosDb;
@@ -210,6 +212,18 @@ public sealed class ElevationPPMod : IMod
         {
             Log.Error($"Elevation++: Failed to init placement height popup: {ex.Message}");
         }
+
+        // Shift/ctrl-click in the vanilla rail pillar tool places a pair of pillars flanking the
+        // clicked block (e.g. a portal over a crossing ground track) instead of the blocked
+        // centre pillar.
+        try
+        {
+            SideTrackPillarsPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply side track pillars patch: {ex.Message}");
+        }
     }
 
     public void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) { }
@@ -233,6 +247,9 @@ public sealed class ElevationPPMod : IMod
         LongTransportPathFinder.MaxSegmentLength =
             JsonConfig.GetInt(CFG_TRANSPORT_SEGMENT, DEFAULT_TRANSPORT_SEGMENT);
         Log.Info($"Elevation++: transport placement max length set to {LongTransportPathFinder.MaxSegmentLength}.");
+        SideTrackPillarsPatch.FarExtraTiles =
+            JsonConfig.GetInt(CFG_PORTAL_CTRL_DISTANCE, DEFAULT_PORTAL_CTRL_DISTANCE);
+        Log.Info($"Elevation++: rail portal ctrl distance set to {SideTrackPillarsPatch.FarExtraTiles}.");
     }
 
     /// <summary>
