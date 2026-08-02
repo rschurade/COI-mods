@@ -1,6 +1,42 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.5
+------
+Rail portals — run a train track under another track:
+- In the vanilla add/remove-pillars tool, shift- or ctrl-clicking a
+  block of an elevated track places TWO support pillars beside the
+  track (left and right, perpendicular to it) instead of the single
+  centre pillar, leaving the space underneath free for another track.
+  Both pillars count as full support for the clicked block.
+- Each side pillar lands on the first valid spot found by sliding
+  outward from the track; obstacles (including the other track of a
+  dual line) are slid past automatically. Shift places as close to the
+  track as possible; ctrl goes further out by a configurable distance
+  (RailPortalCtrlDistance, default 1 tile).
+- Other same-level tracks spanned by the portal (dual lines, with or
+  without a gap between them) are supported by the same click: they
+  receive their own pillars at the exact same column positions,
+  replacing any of their vanilla pillars standing inside the portal.
+  Tracks crossing 3.5+ tiles below are what the portal is for; decks
+  at awkward in-between heights (where a crossbeam could never fit)
+  make the placement invalid instead.
+- Removing any portal pillar demolishes the whole portal in one click.
+  Another track's share is only removed if that track can afford to
+  lose the support (same check the vanilla tool uses); otherwise its
+  columns stay up.
+- Shift/ctrl-clicking an EXISTING pillar replaces it with the side
+  pair (and converts a portal between the close and far stance). The
+  new spots are validated before anything is removed, with rollback,
+  so support is never lost.
+- Ghost previews of both columns follow the cursor with the modifier
+  held; the vanilla centre-pillar ghost is hidden meanwhile.
+- A concrete crossbeam is rendered between the two columns: two "long
+  saddle stones" matching the vanilla pillar-top blocks (procedurally
+  generated, textured with the game's own concrete), spanning under
+  the deck(s) and covering the pillars' saddle stones. Clearance under
+  the beam is kept so an electrified track can pass 4 tiles below.
+
 v0.9.4
 ------
 Vertical pipe connections for pipe connectors:

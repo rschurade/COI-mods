@@ -36,6 +36,14 @@ internal static class PortalCrossbeamRenderer
     // Donor for the beam MATERIAL (not geometry): the transport pillar's concrete base.
     private const string MATERIAL_SOURCE_PREFAB = "Assets/Base/Transports/Pillars/Base.prefab";
 
+    // Seamlessly tiling concrete maps from the game's terrain surface set — unlike the model
+    // atlases these are made to repeat under arbitrary UVs, which is exactly what the
+    // procedural beam mesh needs.
+    private const string CONCRETE_ALBEDO =
+        "Assets/Base/Terrain/Surfaces/Concrete/concreteBlock1a-256-albedo.png";
+    private const string CONCRETE_NORMALS =
+        "Assets/Base/Terrain/Surfaces/Concrete/concreteBlock1a-256-normals.png";
+
     // Saddle-beam proportions, in Unity units (1 tile = 2 units). Cross-section per prism:
     // BLOCK_WIDTH wide, BLOCK_HEIGHT tall with CHAMFER on the two top edges, on a base strip
     // PLATE_HEIGHT tall and PLATE_EXTRA wider on each side. Two prisms ROW_SPACING apart
@@ -68,11 +76,17 @@ internal static class PortalCrossbeamRenderer
     private const float END_EXTEND = 1.1f;
 
     // UV scale: texture repeats every 1/UV_SCALE units.
-    private const float UV_SCALE = 0.25f;
+    private const float UV_SCALE = 1f;
 
-    // Flat matte color for the beam. The donor material's textures (atlas albedo, normal map
-    // with rivet panels, metallic map) are dropped — they read as machinery, not concrete.
-    private static readonly Color BLOCK_COLOR = new Color(0.5f, 0.48f, 0.45f);
+    // The concrete flooring texture is a 4x4 grid of blocks (grooves every 1/4 of the image).
+    // The beam uses only the groove-free interior of one block: a patch starting at this
+    // fraction into the image, PATCH_SIZE of the image wide/tall. The patch copy wraps in
+    // MIRROR mode so repeats stay continuous (mirroring is invisible on noisy concrete).
+    private const float PATCH_START = 70f / 256f;
+    private const float PATCH_SIZE = 52f / 256f;
+
+    // Tint multiplied over the concrete albedo (white = texture as authored).
+    private static readonly Color BLOCK_COLOR = Color.white;
 
     private static Session s_session;
 
@@ -275,12 +289,12 @@ internal static class PortalCrossbeamRenderer
         }
 
         /// <summary>
-        /// Clones the donor material (a plain Unity Standard material) and strips every texture:
-        /// the albedo is an atlas (box-projected UVs would sweep random stripes across it) and
-        /// the normal/metallic maps carry riveted machine paneling. What remains is a flat matte
-        /// color with Standard lighting — the uniform look of the vanilla saddle stones.
+        /// Clones the donor material (a plain Unity Standard material), strips its atlas/rivet
+        /// textures and swaps in the game's seamlessly tiling terrain-concrete maps, which work
+        /// under the beam's box-projected UVs. Falls back to a flat matte color when the
+        /// textures are unavailable.
         /// </summary>
-        private static Material flatConcrete(Material source, Color color)
+        private Material flatConcrete(Material source, Color color)
         {
             var material = new Material(source);
             foreach (string property in new[] { "_MainTex", "_MetallicGlossMap", "_BumpMap" })
@@ -292,6 +306,19 @@ internal static class PortalCrossbeamRenderer
             }
             material.DisableKeyword("_METALLICGLOSSMAP");
             material.DisableKeyword("_NORMALMAP");
+            if (m_assetsDb.TryGetSharedAsset<Texture2D>(CONCRETE_ALBEDO, out Texture2D albedo))
+            {
+                material.SetTexture("_MainTex", makeSeamlessInterior(albedo, linear: false));
+            }
+            else
+            {
+                Log.Warning($"Elevation++: concrete albedo '{CONCRETE_ALBEDO}' not found, beam stays flat-colored.");
+            }
+            if (m_assetsDb.TryGetSharedAsset<Texture2D>(CONCRETE_NORMALS, out Texture2D normals))
+            {
+                material.SetTexture("_BumpMap", makeSeamlessInterior(normals, linear: true));
+                material.EnableKeyword("_NORMALMAP");
+            }
             if (material.HasProperty("_Color"))
             {
                 material.color = color;
@@ -305,6 +332,33 @@ internal static class PortalCrossbeamRenderer
                 material.SetFloat("_Glossiness", 0.1f);
             }
             return material;
+        }
+
+        /// <summary>
+        /// Copies the borderless interior of a tile texture into a new mirror-wrapping texture
+        /// (GPU blit + readback, so compressed non-readable sources work). Mirror wrap makes
+        /// the repeats seamless by construction.
+        /// </summary>
+        private static Texture2D makeSeamlessInterior(Texture2D source, bool linear)
+        {
+            int width = Mathf.RoundToInt(source.width * PATCH_SIZE);
+            int height = Mathf.RoundToInt(source.height * PATCH_SIZE);
+            RenderTexture temporary = RenderTexture.GetTemporary(width, height, 0,
+                RenderTextureFormat.ARGB32,
+                linear ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.sRGB);
+            Graphics.Blit(source, temporary,
+                new Vector2(PATCH_SIZE, PATCH_SIZE),
+                new Vector2(PATCH_START, PATCH_START));
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = temporary;
+            var result = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: true, linear);
+            result.ReadPixels(new Rect(0f, 0f, width, height), 0, 0);
+            result.Apply(updateMipmaps: true);
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(temporary);
+            result.wrapMode = TextureWrapMode.Mirror;
+            result.name = source.name + "_seamless";
+            return result;
         }
 
         private static void logMaterialInfo(Material source)
