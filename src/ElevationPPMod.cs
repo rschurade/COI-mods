@@ -224,6 +224,17 @@ public sealed class ElevationPPMod : IMod
         {
             Log.Error($"Elevation++: Failed to apply side track pillars patch: {ex.Message}");
         }
+
+        // Renders a concrete crossbeam between the side pillars of a rail portal; no-op in
+        // headless runs.
+        try
+        {
+            PortalCrossbeamRenderer.TryInitialize(resolver);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to init portal crossbeam renderer: {ex.Message}");
+        }
     }
 
     public void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) { }
