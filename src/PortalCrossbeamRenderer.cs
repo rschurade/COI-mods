@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using Mafi;
 using Mafi.Core;
 using Mafi.Core.Entities;
@@ -12,51 +11,68 @@ using UnityEngine;
 namespace ElevationPP;
 
 /// <summary>
-/// Renders a concrete crossbeam between the two side pillars of a rail portal (placed by
+/// Renders a crossbeam between the two side pillars of a rail portal (placed by
 /// <see cref="SideTrackPillarsPatch"/>), visually carrying the deck(s) that run over it.
 ///
-/// No custom art: the beam is assembled from copies of the game's own transport-pillar concrete
-/// segment prefab, rotated to lie horizontally and tiled from column to column — the same
-/// clone-a-prefab technique as <see cref="VerticalConnectorStubRenderer"/>. The segments render
-/// with their real materials, so the beam matches the game's concrete look and lighting.
+/// The beam imitates "long versions" of the saddle stones found on rail pillar tops: two
+/// parallel chamfered concrete prisms (one per saddle row), each sitting on a thin darker base
+/// strip — the same silhouette as the vanilla saddle blocks, stretched from column to column.
+/// The saddle geometry cannot be reused from game assets (it is baked into the pillar tower mesh
+/// with a single atlas material), so the mesh is generated procedurally as one seamless piece
+/// per portal, and the material is a clone of the game's transport-pillar concrete material
+/// (tinted towards the saddles' darker gray), so lighting and texture stay native.
 ///
 /// A portal is detected purely from sim state: a (track, block) that owns exactly two pillars
 /// standing at different positions. Tracks adopted by the same portal hold co-located duplicate
-/// pairs, so beams are deduplicated by their (rounded) endpoint positions — one beam per physical
-/// pair of columns. The set of beams is refreshed on SyncUpdateEnd (main thread, sim idle),
-/// throttled to every few syncs; beams appear/disappear within a second of portals being placed
-/// or removed, and stale ones are swept when entities vanish.
+/// pairs, so beams are deduplicated by their (rounded) endpoint positions — one beam per
+/// physical pair of columns. The set of beams is refreshed on SyncUpdateEnd (main thread, sim
+/// idle), throttled to every few syncs; beams appear/disappear within a second of portals being
+/// placed or removed, and stale ones are swept when entities vanish.
 /// </summary>
 internal static class PortalCrossbeamRenderer
 {
     private const int SYNCS_PER_REFRESH = 5;
 
-    // The tileable concrete piece used for beam segments. Candidates (all logged at first use):
-    // - Transports/Pillars/Pillars.prefab: steel lattice segment (reads flimsy for a rail portal)
-    // - Transports/Pillars/Base.prefab: solid concrete foundation block
-    // - Transports/Pillars/PillarsWithFills.prefab, XFill.prefab: lattice with cross braces
-    // - Trains/Pillars/Pillar-base.prefab: the rail pillar's stone plinth
-    private const string BEAM_PREFAB = "Assets/Base/Transports/Pillars/Base.prefab";
+    // Donor for the beam MATERIAL (not geometry): the transport pillar's concrete base.
+    private const string MATERIAL_SOURCE_PREFAB = "Assets/Base/Transports/Pillars/Base.prefab";
 
-    private static readonly string[] CANDIDATE_PREFABS =
-    {
-        "Assets/Base/Transports/Pillars/Pillars.prefab",
-        "Assets/Base/Transports/Pillars/Base.prefab",
-        "Assets/Base/Transports/Pillars/PillarsWithFills.prefab",
-        "Assets/Base/Transports/Pillars/XFill.prefab",
-        "Assets/Base/Trains/Pillars/Pillar-base.prefab",
-        "Assets/Base/Trains/Pillars/Pillar.prefab",
-    };
+    // Saddle-beam proportions, in Unity units (1 tile = 2 units). Cross-section per prism:
+    // BLOCK_WIDTH wide, BLOCK_HEIGHT tall with CHAMFER on the two top edges, on a base strip
+    // PLATE_HEIGHT tall and PLATE_EXTRA wider on each side. Two prisms ROW_SPACING apart
+    // (centre to centre) mirror the two saddle rows on a pillar top.
+    private const float BLOCK_WIDTH = 1.05f;
+    private const float ROW_SPACING = 1.74f;
 
-    // How far below the pillar top the beam's spine runs, in Unity units. The pillar top is the
-    // deck underside; the segment's cross-section extends ±0.98 * CROSS_SCALE around the spine,
-    // so the top edge tucks into the deck box while the underside stays high enough to clear the
-    // catenary of an electrified track crossing 4 tiles below.
-    private const float BEAM_CENTER_DROP = 0.6f;
+    // Block skirt shape (all measured down from the block top). The side faces run vertical to
+    // the shoulder, then chamfer inward to the bottom edge. The outer side's shoulder sits
+    // higher than the inner one, matching the vanilla saddle stones.
+    private const float BOTTOM_DROP = 0.495f;
+    private const float BOTTOM_INSET_INNER = 0.33f;
+    private const float BOTTOM_INSET_OUTER = 0.34f;
+    private const float SHOULDER_DROP_INNER = 0.345f;
+    private const float SHOULDER_DROP_OUTER = 0.345f;
 
-    // Slims the segment's full-tile (1.96 units) cross-section so the beam reads as a girder and
-    // gains extra clearance underneath.
-    private const float CROSS_SCALE = 0.75f;
+    // Central V-notch in the block's underside, arching over the roller pin (points 5-6-7 of
+    // the reference profile). Narrow enough to leave a small flat bottom strip between the
+    // notch base and the bottom corners; slightly asymmetric per the reference.
+    private const float NOTCH_HALF_OUTER = 0.11f;
+    private const float NOTCH_HALF_INNER = 0.1f;
+    private const float NOTCH_RISE = 0.12f;
+
+    // Vertical placement of the beam top relative to the pillar top: negative raises it above,
+    // so the beam covers the pillars' own saddle stones instead of them poking through it.
+    private const float TOP_DROP = -0.27f;
+
+    // How far past each column centre the beam runs — far enough to swallow the pillar's
+    // whole outer saddle stone without poking past the pillar cap.
+    private const float END_EXTEND = 1.1f;
+
+    // UV scale: texture repeats every 1/UV_SCALE units.
+    private const float UV_SCALE = 0.25f;
+
+    // Flat matte color for the beam. The donor material's textures (atlas albedo, normal map
+    // with rivet panels, metallic map) are dropped — they read as machinery, not concrete.
+    private static readonly Color BLOCK_COLOR = new Color(0.5f, 0.48f, 0.45f);
 
     private static Session s_session;
 
@@ -92,9 +108,9 @@ internal static class PortalCrossbeamRenderer
         private readonly List<string> m_toRemoveTmp = new List<string>();
         private readonly Dictionary<long, List<TrainTrackPillar>> m_groupsTmp
             = new Dictionary<long, List<TrainTrackPillar>>();
+        private Material m_blockMaterial;
         private int m_syncCounter;
         private bool m_errorLogged;
-        private bool m_prefabLogged;
 
         public Session(IEntitiesManager entitiesManager, AssetsDb assetsDb)
         {
@@ -136,7 +152,6 @@ internal static class PortalCrossbeamRenderer
 
         private void refreshBeams()
         {
-            // Group constructed pillars by (track, block).
             m_groupsTmp.Clear();
             foreach (IEntity entity in m_entitiesManager.Entities)
             {
@@ -209,84 +224,250 @@ internal static class PortalCrossbeamRenderer
 
         private GameObject createBeam(Vector3 a, Vector3 b)
         {
-            if (!m_assetsDb.TryGetSharedAsset<GameObject>(BEAM_PREFAB, out GameObject prefab))
+            if (!tryGetMaterials())
             {
-                Log.Warning($"Elevation++: beam prefab '{BEAM_PREFAB}' not found, no crossbeam.");
                 return null;
             }
-            logPrefabsOnce();
-
-            // Segment length = the mesh's extent along its (pre-rotation) vertical axis, so any
-            // prefab tiles seamlessly regardless of its authored size.
-            float step = 2f;
-            foreach (MeshFilter filter in prefab.GetComponentsInChildren<MeshFilter>(includeInactive: true))
-            {
-                if (filter.sharedMesh != null)
-                {
-                    step = Mathf.Max(0.4f, filter.sharedMesh.bounds.size.y * 0.98f);
-                    break;
-                }
-            }
-
-            var root = new GameObject("ElevationPP_PortalCrossbeam");
             Vector3 axis = b - a;
             axis.y = 0f;
-            float length = axis.magnitude;
-            Vector3 direction = axis / length;
-            // Lay the (vertical) segment prefab on its side along the beam axis.
-            Quaternion rotation = Quaternion.FromToRotation(Vector3.up, direction);
-            float y = ((a.y + b.y) * 0.5f) - BEAM_CENTER_DROP;
+            float span = axis.magnitude;
+            Vector3 direction = axis / span;
 
-            int segmentCount = Mathf.Max(1, Mathf.CeilToInt(length / step));
-            for (int i = 0; i < segmentCount; i++)
-            {
-                Vector3 start = a + direction * (i * step);
-                start.y = y;
-                GameObject segment = UnityEngine.Object.Instantiate(prefab, start, rotation, root.transform);
-                // Local y runs along the beam; x/z are the cross-section regardless of rotation.
-                segment.transform.localScale = new Vector3(CROSS_SCALE, 1f, CROSS_SCALE);
-                foreach (Component component in segment.GetComponentsInChildren<Component>(includeInactive: true))
-                {
-                    if (component is MonoBehaviour || component.GetType().Name.EndsWith("Collider"))
-                    {
-                        UnityEngine.Object.Destroy(component);
-                    }
-                }
-            }
-            return root;
+            var go = new GameObject("ElevationPP_PortalCrossbeam");
+            // Anchor one overhang-length before column A, so the beam extends symmetrically past
+            // both column centres.
+            Vector3 anchor = a - direction * END_EXTEND;
+            go.transform.position = new Vector3(anchor.x, Mathf.Min(a.y, b.y) - TOP_DROP, anchor.z);
+            // Yaw-only rotation mapping local +X onto the beam direction. (FromToRotation is
+            // unusable here: for directions near -X it picks an arbitrary 180-degree axis and
+            // can roll the beam upside down.)
+            float yawDegrees = Mathf.Atan2(-direction.z, direction.x) * Mathf.Rad2Deg;
+            go.transform.rotation = Quaternion.Euler(0f, yawDegrees, 0f);
+
+            Mesh mesh = buildBeamMesh(span + 2f * END_EXTEND);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            MeshRenderer renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = m_blockMaterial;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            return go;
         }
 
-        private void logPrefabsOnce()
+        private bool tryGetMaterials()
         {
-            if (m_prefabLogged)
+            if (m_blockMaterial != null)
             {
-                return;
+                return true;
             }
-            m_prefabLogged = true;
+            if (!m_assetsDb.TryGetSharedAsset<GameObject>(MATERIAL_SOURCE_PREFAB, out GameObject prefab))
+            {
+                Log.Warning($"Elevation++: material donor '{MATERIAL_SOURCE_PREFAB}' not found, no crossbeam.");
+                return false;
+            }
+            MeshRenderer donor = prefab.GetComponentInChildren<MeshRenderer>(includeInactive: true);
+            if (donor == null || donor.sharedMaterial == null)
+            {
+                Log.Warning("Elevation++: material donor has no renderer/material, no crossbeam.");
+                return false;
+            }
+            logMaterialInfo(donor.sharedMaterial);
+            m_blockMaterial = flatConcrete(donor.sharedMaterial, BLOCK_COLOR);
+            return true;
+        }
+
+        /// <summary>
+        /// Clones the donor material (a plain Unity Standard material) and strips every texture:
+        /// the albedo is an atlas (box-projected UVs would sweep random stripes across it) and
+        /// the normal/metallic maps carry riveted machine paneling. What remains is a flat matte
+        /// color with Standard lighting — the uniform look of the vanilla saddle stones.
+        /// </summary>
+        private static Material flatConcrete(Material source, Color color)
+        {
+            var material = new Material(source);
+            foreach (string property in new[] { "_MainTex", "_MetallicGlossMap", "_BumpMap" })
+            {
+                if (material.HasProperty(property))
+                {
+                    material.SetTexture(property, null);
+                }
+            }
+            material.DisableKeyword("_METALLICGLOSSMAP");
+            material.DisableKeyword("_NORMALMAP");
+            if (material.HasProperty("_Color"))
+            {
+                material.color = color;
+            }
+            if (material.HasProperty("_Metallic"))
+            {
+                material.SetFloat("_Metallic", 0f);
+            }
+            if (material.HasProperty("_Glossiness"))
+            {
+                material.SetFloat("_Glossiness", 0.1f);
+            }
+            return material;
+        }
+
+        private static void logMaterialInfo(Material source)
+        {
             try
             {
-                var sb = new System.Text.StringBuilder("Elevation++: beam candidate prefabs:");
-                foreach (string path in CANDIDATE_PREFABS)
+                var sb = new System.Text.StringBuilder(
+                    $"Elevation++: beam donor material '{source.name}' shader '{source.shader.name}':");
+                int count = source.shader.GetPropertyCount();
+                for (int i = 0; i < count; i++)
                 {
-                    if (!m_assetsDb.TryGetSharedAsset<GameObject>(path, out GameObject prefab))
+                    string name = source.shader.GetPropertyName(i);
+                    var type = source.shader.GetPropertyType(i);
+                    string value = "";
+                    switch (type)
                     {
-                        sb.Append($"\n  {path}: NOT FOUND");
-                        continue;
+                        case UnityEngine.Rendering.ShaderPropertyType.Float:
+                        case UnityEngine.Rendering.ShaderPropertyType.Range:
+                            value = source.GetFloat(name).ToString("F2");
+                            break;
+                        case UnityEngine.Rendering.ShaderPropertyType.Color:
+                            value = source.GetColor(name).ToString();
+                            break;
+                        case UnityEngine.Rendering.ShaderPropertyType.Texture:
+                            Texture texture = source.GetTexture(name);
+                            value = texture != null ? $"{texture.name} {texture.width}x{texture.height}" : "null";
+                            break;
                     }
-                    sb.Append($"\n  {path}:");
-                    foreach (MeshFilter filter in prefab.GetComponentsInChildren<MeshFilter>(includeInactive: true))
-                    {
-                        Bounds bounds = filter.sharedMesh != null ? filter.sharedMesh.bounds : default(Bounds);
-                        sb.Append($"\n    '{filter.gameObject.name}' mesh='{(filter.sharedMesh != null ? filter.sharedMesh.name : "null")}'"
-                            + $" center={bounds.center} size={bounds.size}"
-                            + $" localPos={filter.transform.localPosition} localScale={filter.transform.localScale}");
-                    }
+                    sb.Append($"\n  {name} ({type}) = {value}");
                 }
                 Log.Info(sb.ToString());
             }
             catch (Exception)
             {
                 // Diagnostics only.
+            }
+        }
+
+        /// <summary>
+        /// Builds the beam mesh in local space: X along the beam (0..length), the beam TOP at
+        /// y = 0, centred on Z. Two chamfered prisms at ±ROW_SPACING/2. Flat-shaded via
+        /// per-face vertices.
+        /// </summary>
+        private static Mesh buildBeamMesh(float length)
+        {
+            var vertices = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var blockTris = new List<int>();
+
+            foreach (float zc in new[] { -ROW_SPACING * 0.5f, ROW_SPACING * 0.5f })
+            {
+                addChamferedPrism(vertices, uvs, blockTris, length, zc, outerSign: Mathf.Sign(zc));
+            }
+
+            var mesh = new Mesh
+            {
+                name = "ElevationPP_PortalBeam",
+            };
+            mesh.SetVertices(vertices);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(blockTris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static void addChamferedPrism(List<Vector3> vertices, List<Vector2> uvs,
+            List<int> triangles, float length, float zc, float outerSign)
+        {
+            float w = BLOCK_WIDTH * 0.5f;
+            // Anvil profile like the vanilla saddle stones: full width at the TOP, chamfered
+            // inward toward the bottom, with the outer side's shoulder sitting higher. Corners
+            // counter-clockwise seen from +X (start cap).
+            float shoulderRight = -(outerSign > 0f ? SHOULDER_DROP_OUTER : SHOULDER_DROP_INNER);
+            float shoulderLeft = -(outerSign > 0f ? SHOULDER_DROP_INNER : SHOULDER_DROP_OUTER);
+            float insetRight = outerSign > 0f ? BOTTOM_INSET_OUTER : BOTTOM_INSET_INNER;
+            float insetLeft = outerSign > 0f ? BOTTOM_INSET_INNER : BOTTOM_INSET_OUTER;
+            float notchRight = outerSign > 0f ? NOTCH_HALF_OUTER : NOTCH_HALF_INNER;
+            float notchLeft = outerSign > 0f ? NOTCH_HALF_INNER : NOTCH_HALF_OUTER;
+            // Numbered per the reference profile sketch (1/2 top corners, 3/9 shoulders, 4/8
+            // bottom corners, 5-6-7 the central notch over the roller). Counter-clockwise, and
+            // deliberately STARTING at the notch peak: the end-cap fan is built from the first
+            // point, and the peak is the only vertex that sees the whole (concave) profile.
+            var p = new Vector2[]
+            {
+                new Vector2(zc, -BOTTOM_DROP + NOTCH_RISE),                // 6 notch peak
+                new Vector2(zc + notchRight, -BOTTOM_DROP),                // 5
+                new Vector2(zc + w - insetRight, -BOTTOM_DROP),            // 4 bottom right
+                new Vector2(zc + w, shoulderRight),                        // 3 right shoulder
+                new Vector2(zc + w, 0f),                                   // 2 top right
+                new Vector2(zc - w, 0f),                                   // 1 top left
+                new Vector2(zc - w, shoulderLeft),                         // 9 left shoulder
+                new Vector2(zc - w + insetLeft, -BOTTOM_DROP),             // 8 bottom left
+                new Vector2(zc - notchLeft, -BOTTOM_DROP),                 // 7
+            };
+            addProfilePrism(vertices, uvs, triangles, p, length);
+        }
+
+        /// <summary>Extrudes a counter-clockwise cross-section profile (in (z, y), as seen from
+        /// +X) along the beam's X axis, with end caps. The caps are triangulated as a fan from
+        /// the FIRST profile point, so the profile must be star-shaped as seen from it (any
+        /// convex profile qualifies; for concave ones start at a point that sees all
+        /// others).</summary>
+        private static void addProfilePrism(List<Vector3> vertices, List<Vector2> uvs,
+            List<int> triangles, Vector2[] p, float length)
+        {
+            for (int i = 0; i < p.Length; i++)
+            {
+                Vector2 e0 = p[i];
+                Vector2 e1 = p[(i + 1) % p.Length];
+                addQuad(vertices, uvs, triangles,
+                    new Vector3(0f, e0.y, e0.x), new Vector3(length, e0.y, e0.x),
+                    new Vector3(length, e1.y, e1.x), new Vector3(0f, e1.y, e1.x));
+            }
+            addCap(vertices, uvs, triangles, p, 0f, flip: false);
+            addCap(vertices, uvs, triangles, p, length, flip: true);
+        }
+
+        private static void addQuad(List<Vector3> vertices, List<Vector2> uvs, List<int> triangles,
+            Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3)
+        {
+            int baseIndex = vertices.Count;
+            vertices.Add(v0);
+            vertices.Add(v1);
+            vertices.Add(v2);
+            vertices.Add(v3);
+            // Project UVs along the quad's dominant axes.
+            Vector3 side = v1 - v0;
+            Vector3 up = v3 - v0;
+            uvs.Add(new Vector2(0f, 0f));
+            uvs.Add(new Vector2(side.magnitude * UV_SCALE, 0f));
+            uvs.Add(new Vector2(side.magnitude * UV_SCALE, up.magnitude * UV_SCALE));
+            uvs.Add(new Vector2(0f, up.magnitude * UV_SCALE));
+            triangles.Add(baseIndex);
+            triangles.Add(baseIndex + 1);
+            triangles.Add(baseIndex + 2);
+            triangles.Add(baseIndex);
+            triangles.Add(baseIndex + 2);
+            triangles.Add(baseIndex + 3);
+        }
+
+        private static void addCap(List<Vector3> vertices, List<Vector2> uvs, List<int> triangles,
+            Vector2[] profile, float x, bool flip)
+        {
+            int baseIndex = vertices.Count;
+            foreach (Vector2 point in profile)
+            {
+                vertices.Add(new Vector3(x, point.y, point.x));
+                uvs.Add(new Vector2(point.x * UV_SCALE, point.y * UV_SCALE));
+            }
+            for (int i = 1; i < profile.Length - 1; i++)
+            {
+                triangles.Add(baseIndex);
+                if (flip)
+                {
+                    triangles.Add(baseIndex + i + 1);
+                    triangles.Add(baseIndex + i);
+                }
+                else
+                {
+                    triangles.Add(baseIndex + i);
+                    triangles.Add(baseIndex + i + 1);
+                }
             }
         }
     }
