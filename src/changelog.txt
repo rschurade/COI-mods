@@ -1,6 +1,35 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.6
+------
+Auto-portals while laying track:
+- A new elevated track can now be dragged straight over an existing
+  track (crossing or stacked in parallel): wherever the planned centre
+  support pillar cannot be placed, the portal pillar pair is planned
+  and built automatically, crossbeam included. Stacked lines no longer
+  have to be built strictly top-down. The drag ghost shows the real
+  portal columns, and what you see is what gets built.
+- This applies to ANY spot where the centre pillar is blocked (e.g. a
+  building or belt below), not just track crossings — if the flanking
+  pair fits, the placement is valid.
+- Auto-placed portals use the closest stance; convert them afterwards
+  with a modifier-click if you want a wider one.
+
+Portal stance is now a fixed modifier ladder:
+- Shift = closest valid spot, ctrl = +2 tiles, ctrl+shift = +4,
+  alt = +6, alt+shift = +8. The RailPortalCtrlDistance setting from
+  v0.9.5 is removed (a leftover entry in an existing config is
+  ignored).
+
+Height-aware track snapping:
+- When laying track with the cursor raised (arrow keys), hovering an
+  existing track at a different height no longer snaps the cursor —
+  and its height — to that track. Snapping to tracks at the matching
+  height still works (extending or connecting elevated lines), and
+  picking at ground level is unchanged. Disable via the new
+  RailBuildHeightAwareSnapping setting to restore vanilla snapping.
+
 v0.9.5
 ------
 Rail portals — run a train track under another track:
