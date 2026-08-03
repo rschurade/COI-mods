@@ -105,7 +105,8 @@ internal static class ConnectorPortPreviewPatch
                 return;
             }
             var protoOption = (Option<ILayoutEntityProto>)s_entityProtoField.GetValue(__instance);
-            if (!(protoOption.ValueOrNull is MiniZipperProto)
+            if (!(protoOption.ValueOrNull is MiniZipperProto
+                    || protoOption.ValueOrNull is Connectors.BalancingConnectorProto)
                 && !ExtraConnectorPreviews.ContainsKey(__instance))
             {
                 return;

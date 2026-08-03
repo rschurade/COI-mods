@@ -286,7 +286,7 @@ internal class ElevatedStationData : IModData
     /// init and unlock it with that same node (hidden in the research UI to avoid duplicate icons).
     /// If no node is found, leave it unlocked so it never becomes permanently unbuildable.
     /// </summary>
-    private static Proto addGated(ProtosDb db, Proto proto, ResearchNodeProto unlockedBy)
+    internal static Proto addGated(ProtosDb db, Proto proto, ResearchNodeProto unlockedBy)
     {
         Proto added = db.Add(proto, lockOnInit: unlockedBy != null);
         if (unlockedBy != null)
@@ -368,7 +368,7 @@ internal class ElevatedStationData : IModData
     /// <c>v.Graphics.IconPath</c> here because the vanilla protos aren't initialized yet at mod
     /// registration time (the path is set later), so it's still null.
     /// </summary>
-    private static string vanillaIconPath(StaticEntityProto v)
+    internal static string vanillaIconPath(StaticEntityProto v)
     {
         return Proto.Gfx.GetGeneratedIconPathRoot(v) + "/LayoutEntity/" + v.Id + ".png";
     }
@@ -388,7 +388,7 @@ internal class ElevatedStationData : IModData
     /// source proto's icon, and marks the icon custom so the proto's Initialize won't overwrite it
     /// with a (missing) generated path for the new id. The vanilla proto is untouched (separate Gfx).
     /// </summary>
-    private static object cloneGfxWithCategory(object vanillaGfx, string iconPath, ImmutableArray<ToolbarEntryData> categoryArray)
+    internal static object cloneGfxWithCategory(object vanillaGfx, string iconPath, ImmutableArray<ToolbarEntryData> categoryArray)
     {
         object clone = typeof(object)
             .GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance)

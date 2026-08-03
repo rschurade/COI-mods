@@ -4,6 +4,8 @@ using Mafi;
 using Mafi.Collections.ImmutableCollections;
 using Mafi.Core;
 using Mafi.Core.Entities;
+using Mafi.Core.Entities.Static;
+using Mafi.Core.Entities.Static.Layout;
 using Mafi.Core.Factory.Zippers;
 using Mafi.Core.GameLoop;
 using Mafi.Core.Ports.Io;
@@ -69,9 +71,9 @@ internal static class VerticalConnectorStubRenderer
     {
         private readonly IEntitiesManager m_entitiesManager;
         private readonly AssetsDb m_assetsDb;
-        private readonly Dictionary<MiniZipper, GameObject> m_stubs = new Dictionary<MiniZipper, GameObject>();
-        private readonly List<MiniZipper> m_toRemoveTmp = new List<MiniZipper>();
-        private readonly HashSet<MiniZipper> m_neededTmp = new HashSet<MiniZipper>();
+        private readonly Dictionary<LayoutEntityBase, GameObject> m_stubs = new Dictionary<LayoutEntityBase, GameObject>();
+        private readonly List<LayoutEntityBase> m_toRemoveTmp = new List<LayoutEntityBase>();
+        private readonly HashSet<LayoutEntityBase> m_neededTmp = new HashSet<LayoutEntityBase>();
         private int m_syncCounter;
         private bool m_errorLogged;
 
@@ -118,18 +120,19 @@ internal static class VerticalConnectorStubRenderer
             m_neededTmp.Clear();
             foreach (IEntity entity in m_entitiesManager.Entities)
             {
-                if (entity is MiniZipper zipper && zipper.IsConstructed && hasConnectedBottomPort(zipper))
+                if (isConnectorLike(entity, out LayoutEntityBase connector, out ImmutableArray<IoPort> ports)
+                    && connector.IsConstructed && hasConnectedBottomPort(ports))
                 {
-                    m_neededTmp.Add(zipper);
-                    if (!m_stubs.ContainsKey(zipper))
+                    m_neededTmp.Add(connector);
+                    if (!m_stubs.ContainsKey(connector))
                     {
-                        m_stubs.Add(zipper, createStub(zipper));
+                        m_stubs.Add(connector, createStub(connector));
                     }
                 }
             }
 
             m_toRemoveTmp.Clear();
-            foreach (KeyValuePair<MiniZipper, GameObject> pair in m_stubs)
+            foreach (KeyValuePair<LayoutEntityBase, GameObject> pair in m_stubs)
             {
                 if (!m_neededTmp.Contains(pair.Key))
                 {
@@ -140,15 +143,37 @@ internal static class VerticalConnectorStubRenderer
                     m_toRemoveTmp.Add(pair.Key);
                 }
             }
-            foreach (MiniZipper gone in m_toRemoveTmp)
+            foreach (LayoutEntityBase gone in m_toRemoveTmp)
             {
                 m_stubs.Remove(gone);
             }
         }
 
-        private static bool hasConnectedBottomPort(MiniZipper zipper)
+        /// <summary>Pipe connectors, plus the mod's balancing pipe connector (a Zipper entity that
+        /// reuses the same connector model, so it has the same missing-bottom-stub problem).</summary>
+        private static bool isConnectorLike(IEntity entity, out LayoutEntityBase connector,
+            out ImmutableArray<IoPort> ports)
         {
-            ImmutableArray<IoPort>.Enumerator enumerator = zipper.Ports.GetEnumerator();
+            if (entity is MiniZipper miniZipper)
+            {
+                connector = miniZipper;
+                ports = miniZipper.Ports;
+                return true;
+            }
+            if (entity is Zipper zipper && zipper.Prototype is Connectors.BalancingConnectorProto)
+            {
+                connector = zipper;
+                ports = zipper.Ports;
+                return true;
+            }
+            connector = null;
+            ports = default(ImmutableArray<IoPort>);
+            return false;
+        }
+
+        private static bool hasConnectedBottomPort(ImmutableArray<IoPort> ports)
+        {
+            ImmutableArray<IoPort>.Enumerator enumerator = ports.GetEnumerator();
             while (enumerator.MoveNext())
             {
                 IoPort port = enumerator.Current;
@@ -160,9 +185,10 @@ internal static class VerticalConnectorStubRenderer
             return false;
         }
 
-        private GameObject createStub(MiniZipper zipper)
+        private GameObject createStub(LayoutEntityBase zipper)
         {
-            string prefabPath = zipper.Prototype.Graphics.PrefabPath;
+            var proto = (LayoutEntityProto)zipper.Prototype;
+            string prefabPath = proto.Graphics.PrefabPath;
             if (!m_assetsDb.TryGetSharedAsset<GameObject>(prefabPath, out GameObject prefab))
             {
                 Log.Warning($"Elevation++: connector prefab '{prefabPath}' not found, no bottom stub.");
@@ -171,7 +197,7 @@ internal static class VerticalConnectorStubRenderer
 
             // Same anchor the instanced renderer uses (PrefabOrigin is zero for mini-zippers), so the
             // copy starts exactly where the vanilla model is drawn.
-            Vector3 pos = zipper.Prototype.Layout.GetModelOrigin(zipper.Transform).ToVector3();
+            Vector3 pos = proto.Layout.GetModelOrigin(zipper.Transform).ToVector3();
             GameObject go = UnityEngine.Object.Instantiate(prefab, pos, Quaternion.identity);
             go.name = "ElevationPP_ConnectorBottomStub";
 

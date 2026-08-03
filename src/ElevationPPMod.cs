@@ -88,6 +88,10 @@ public sealed class ElevationPPMod : IMod
     {
         // Adds the "Elevated Unit Station" — a cargo station buildable on elevated track.
         registrator.RegisterData<Stations.ElevatedStationData>();
+
+        // Adds the "Balancing pipe connector" — a 1x1 pipe connector with the vanilla balancer's
+        // prioritization features and management window.
+        registrator.RegisterData<Connectors.BalancingConnectorData>();
     }
 
     public void RegisterDependencies(DependencyResolverBuilder depBuilder, ProtosDb protosDb, bool gameWasLoaded)
@@ -105,6 +109,18 @@ public sealed class ElevationPPMod : IMod
         catch (Exception ex)
         {
             Log.Error($"Elevation++: Failed to register long transport path-finder: {ex.Message}");
+        }
+
+        // Placement support for the balancing pipe connector: the request factory that ignores
+        // transports for collisions plus the validator that checks and performs the pipe cut-in
+        // (the same pattern the vanilla MiniZipperValidator uses for connectors).
+        try
+        {
+            depBuilder.RegisterDependency<Connectors.BalancingConnectorValidator>().AsAllInterfaces();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to register balancing connector validator: {ex.Message}");
         }
 
         applyPatches();
@@ -177,6 +193,17 @@ public sealed class ElevationPPMod : IMod
         catch (Exception ex)
         {
             Log.Error($"Elevation++: Failed to apply vertical connector ports patch: {ex.Message}");
+        }
+
+        // Adds the same top/bottom ports to the balancing pipe connector (whose entity is the
+        // vanilla Zipper); requires the vertical ports patch above.
+        try
+        {
+            Connectors.BalancingConnectorPortsPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply balancing connector ports patch: {ex.Message}");
         }
 
         // Lets a pipe connector be placed directly onto a pipe riser's elbow tile (cut-in without

@@ -116,7 +116,8 @@ internal static class VerticalPreviewPortsPatch
                 return;
             }
             ILayoutEntityProto proto = __instance.LayoutEntityProto;
-            if (!(proto is MiniZipperProto) || proto.Ports.IsEmpty
+            if (!(proto is MiniZipperProto || proto is Connectors.BalancingConnectorProto)
+                || proto.Ports.IsEmpty
                 || (bool)s_disablePreviewsField.GetValue(__instance))
             {
                 return;
