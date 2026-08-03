@@ -136,6 +136,28 @@ public sealed class ElevationPPMod : IMod
             Log.Error($"Elevation++: Failed to apply elevated station electrification patch: {ex.Message}");
         }
 
+        // Keeps elevated stations from raising the terrain toward deck height when their
+        // construction finishes (the vanilla foundation shaping applied relative to entity Z).
+        try
+        {
+            Stations.ElevatedStationTerrainPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply elevated station terrain patch: {ex.Message}");
+        }
+
+        // Makes elevated stations anchor the track-support chain (like ground stations do), so
+        // splicing one into an elevated line no longer flags the adjacent spans as unsupported.
+        try
+        {
+            Stations.ElevatedStationSupportPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply elevated station support patch: {ex.Message}");
+        }
+
         // Lets an elevated belt/pipe be held by the supported connectors at its ends, so the pillar
         // in a short segment between two connectors is no longer mandatory and can be removed.
         try

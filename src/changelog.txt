@@ -1,6 +1,34 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.7
+------
+Elevated station fixes for game Update 4 (v0.8.6c):
+- Placing an elevated station onto an existing elevated track no longer
+  raises a huge mound of dirt under it. Update 4 terraforms a substitute
+  plinth up to the entity's base height wherever a support pillar cannot
+  be built — under a station spliced onto a track, that meant a hill up
+  to deck height. Elevated stations now simply skip such tiles; the
+  building rests on its remaining ring pillars.
+- An elevated station now anchors the track support chain, the way
+  ground stations always have. Previously a station spliced into an
+  elevated line BROKE the chain — spans that used to reach a pillar
+  through the station's stretch suddenly flagged as unsupported. The
+  station's track blocks now count as full support (they stand on the
+  station's own pillars), applied on placement and on save load, so
+  existing affected saves heal themselves.
+- The support scaffolding under a station root no longer stays
+  blueprint-blue after construction completes. The vanilla sync that
+  promotes a finished elevated building's pillars only handles entities
+  with belt/pipe ports; the station root has none. (Existing saves:
+  the game's own load-time validation already repairs stale blue
+  pillars.)
+- Elevated stations are also opted out of the construction-time
+  foundation shaping (applied relative to entity height), which would
+  similarly re-shape ground toward deck level on build or deconstruct.
+
+Verified against game v0.8.6c (Update 4).
+
 v0.9.6
 ------
 Auto-portals while laying track:
