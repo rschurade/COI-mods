@@ -185,6 +185,7 @@ internal class ElevatedStationData : IModData
         int order = v.Id.ToString().Contains("Molten") ? 200 : vanillaOrder(v.Graphics.Categories, 115);
         var categoryArray = registrator.GetCategoryToArray(ELEVATED_CATEGORY_ID, false, order);
         var gfx = (TrainStationModuleProto.Gfx)cloneGfxWithCategory(v.Graphics, vanillaIconPath(v), categoryArray);
+        recordAnimationPath(id, v);
         bool electrified = v.ElectrificationType != ElectrificationType.None;
 
         var proto = new ElevatedStationModuleProto(
@@ -214,6 +215,7 @@ internal class ElevatedStationData : IModData
         // normal Stations tab where "Train station" comes first.
         var categoryArray = registrator.GetCategoryToArray(ELEVATED_CATEGORY_ID, false, 100);
         var gfx = (EntityWithTrainTrackBaseProto.Gfx)cloneGfxWithCategory(v.Graphics, vanillaIconPath(v), categoryArray);
+        recordAnimationPath(id, v);
 
         var proto = new ElevatedStationRootProto(
             id, strings, layout, v.Costs, trajectory, v.PowerConsumption, gfx,
@@ -238,6 +240,7 @@ internal class ElevatedStationData : IModData
         EntityLayout layout = parseHollowFootprint(registrator, footprintRows(v.Layout, () => fillGrid(w, 7)));
         var categoryArray = registrator.GetCategoryToArray(ELEVATED_CATEGORY_ID, false, vanillaOrder(v.Graphics.Categories, 120));
         var gfx = (TrainStationFuelProto.Gfx)cloneGfxWithCategory(v.Graphics, vanillaIconPath(v), categoryArray);
+        recordAnimationPath(id, v);
         bool electrified = v.ElectrificationType != ElectrificationType.None;
 
         var proto = new ElevatedStationFuelProto(
@@ -398,6 +401,60 @@ internal class ElevatedStationData : IModData
             Log.Warning("Elevation++: Gfx IconIsCustom field not found; elevated station icons may be missing.");
         }
         return clone;
+    }
+
+    /// <summary>
+    /// Repairs <c>Graphics.AnimationDataAssetPathBase</c> of an elevated station proto.
+    ///
+    /// The path is recomputed in <c>Gfx.Initialize</c> from the asset root of the mod OWNING the
+    /// proto — and for protos of a regular (non-core, non-DLC) mod that root is the placeholder
+    /// "TODO". The baked semi-instanced animation metadata (e.g.
+    /// <c>Assets/Unity/Generated/Animations/TrainStationFluid_LOD0.txt</c>, which drives the fluid
+    /// module's extending loading pipe) is then looked up at <c>TODO/…</c>, never found, and those
+    /// animated parts stay frozen in their rest pose (the game log shows "Animation data not
+    /// found"). Parts driven by real Animator components (like the pump) are unaffected, which is
+    /// why only PART of the loading animation played.
+    ///
+    /// The correct path can only be built from the SOURCE proto (its mod is the core game or a
+    /// DLC), so it is recorded here at registration keyed by the clone's id, and the proto classes
+    /// re-apply it in <c>OnInitialize</c> right after the base call ran <c>Gfx.Initialize</c>.
+    /// </summary>
+    internal static void FixAnimationDataPath(LayoutEntityProto proto)
+    {
+        if (s_animationPathOverrides.TryGetValue(proto.Id.ToString(), out string path))
+        {
+            setField(proto.Graphics.GetType(), proto.Graphics,
+                "<AnimationDataAssetPathBase>k__BackingField", path);
+        }
+    }
+
+    private static readonly Dictionary<string, string> s_animationPathOverrides
+        = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Records the animation-data base path the elevated clone <paramref name="id"/> must use: the
+    /// source proto's asset root plus its animation name (which honours the proto's private
+    /// animation-swap override, e.g. the electrified fluid module reusing "TrainStationFluid").
+    /// </summary>
+    private static void recordAnimationPath(StaticEntityProto.ID id, StaticEntityProto v)
+    {
+        string swap = getField(v.Graphics.GetType(), v.Graphics,
+            "m_instancedRenderingAnimationProtoSwap") as string;
+        s_animationPathOverrides[id.ToString()] =
+            Proto.Gfx.GetGeneratedAnimationsPathRoot(v) + "/" + (swap ?? v.Id.ToString());
+    }
+
+    private static object getField(Type type, object target, string name)
+    {
+        for (Type t = type; t != null; t = t.BaseType)
+        {
+            FieldInfo f = t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (f != null)
+            {
+                return f.GetValue(target);
+            }
+        }
+        return null;
     }
 
     private static bool setField(Type type, object target, string name, object value)

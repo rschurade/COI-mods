@@ -64,6 +64,15 @@ public class ElevatedStationModuleProto : TrainStationModuleProto, ITrainTrackMa
         }
     }
 
+    protected override void OnInitialize(ProtosDb protosDb)
+    {
+        base.OnInitialize(protosDb);
+        // Gfx.Initialize just rebuilt AnimationDataAssetPathBase from OUR mod's asset root, which
+        // is the "TODO" placeholder — restore the source proto's path so the baked semi-instanced
+        // animations (e.g. the fluid module's extending loading pipe) are found and play.
+        ElevatedStationData.FixAnimationDataPath(this);
+    }
+
     public T SelectBetweenElevatedAndGround<T>(TerrainManager terrainManager, TileTransform transform)
         where T : class, ITrainTrackMayBeElevatedProto
     {

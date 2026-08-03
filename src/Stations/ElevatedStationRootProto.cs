@@ -45,4 +45,11 @@ public class ElevatedStationRootProto : TrainStationRootProto, ILayoutEntityProt
             "<IgnoreMissingSupport>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
         backing?.SetValue(this, true);
     }
+
+    protected override void OnInitialize(ProtosDb protosDb)
+    {
+        base.OnInitialize(protosDb);
+        // Restore the source proto's animation-data path (see the module proto for details).
+        ElevatedStationData.FixAnimationDataPath(this);
+    }
 }
