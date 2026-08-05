@@ -37,6 +37,9 @@ public sealed class ShippingPPMod : IMod
         // Adds the "Local cargo terminal" — the smallest vanilla cargo depot re-purposed for
         // local shipping.
         registrator.RegisterData<Terminals.LocalTerminalData>();
+
+        // Adds the "Navigation buoy" — a route marker stop for shipping lines.
+        registrator.RegisterData<Lines.NavBuoyData>();
     }
 
     public void RegisterDependencies(DependencyResolverBuilder depBuilder, ProtosDb protosDb,

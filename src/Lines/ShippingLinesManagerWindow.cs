@@ -91,8 +91,8 @@ public class ShippingLinesManagerWindow : Window
         m_shipsColumn = new Column(2.pt());
 
         var addStopDropdown = new Dropdown<int>(
-            (int terminalId, int idx, bool inDropdown) =>
-                new Label(titleOfTerminal(terminalId).AsLoc()));
+            (int stopEntityId, int idx, bool inDropdown) =>
+                new Label(titleOfStop(stopEntityId).AsLoc()));
         addStopDropdown.OnValueChanged(delegate(int terminalId, int _)
         {
             m_pendingAddTerminalId = terminalId;
@@ -202,13 +202,16 @@ public class ShippingLinesManagerWindow : Window
         return null;
     }
 
-    private string titleOfTerminal(int entityIdValue)
+    private string titleOfStop(int entityIdValue)
     {
-        if (m_entitiesManager.TryGetEntity(new EntityId(entityIdValue), out LocalTerminal t))
+        if (m_entitiesManager.TryGetEntity(new EntityId(entityIdValue),
+            out Mafi.Core.Entities.Static.StaticEntity stop))
         {
-            return t.GetTitle();
+            return stop.Prototype is NavBuoyProto
+                ? $"[buoy] {stop.GetTitle()}"
+                : stop.GetTitle();
         }
-        return $"Terminal {entityIdValue}";
+        return $"Stop {entityIdValue}";
     }
 
     private string computeStateHash()
@@ -240,6 +243,15 @@ public class ShippingLinesManagerWindow : Window
             if (!terminal.IsDestroyed && terminal.IsConstructed)
             {
                 sb.Append(terminal.Id.Value).Append(':').Append(terminal.GetTitle()).Append(';');
+            }
+        }
+        sb.Append('|');
+        foreach (Mafi.Base.Prototypes.Buildings.BarrierEntity buoy in
+            m_entitiesManager.GetAllEntitiesOfType<Mafi.Base.Prototypes.Buildings.BarrierEntity>())
+        {
+            if (buoy.Prototype is NavBuoyProto && !buoy.IsDestroyed && buoy.IsConstructed)
+            {
+                sb.Append(buoy.Id.Value).Append(':').Append(buoy.GetTitle()).Append(';');
             }
         }
         return sb.ToString();
@@ -276,12 +288,12 @@ public class ShippingLinesManagerWindow : Window
         m_stopsColumn.Clear();
         for (int i = 0; i < selected.StopCount; i++)
         {
-            CargoDepot stop = selected.StopAtOrNull(i);
+            Mafi.Core.Entities.Static.StaticEntity stop = selected.StopAtOrNull(i);
             if (stop == null)
             {
                 continue;
             }
-            CargoDepot captured = stop;
+            Mafi.Core.Entities.Static.StaticEntity captured = stop;
             var removeBtn = new ButtonText("remove".AsLoc(), delegate
             {
                 m_inputScheduler.ScheduleInputCmd(new ModifyLineCmd(
@@ -289,18 +301,26 @@ public class ShippingLinesManagerWindow : Window
             });
             m_stopsColumn.Add(new Row(4.pt())
             {
-                new Label($"{i + 1}. {stop.GetTitle()}".AsLoc()),
+                new Label($"{i + 1}. {titleOfStop(stop.Id.Value)}".AsLoc()),
                 removeBtn
             });
         }
 
-        // Add-stop dropdown options: all constructed terminals.
+        // Add-stop dropdown options: all constructed terminals and navigation buoys.
         var options = new Lyst<int>();
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
             if (!terminal.IsDestroyed && terminal.IsConstructed)
             {
                 options.Add(terminal.Id.Value);
+            }
+        }
+        foreach (Mafi.Base.Prototypes.Buildings.BarrierEntity buoy in
+            m_entitiesManager.GetAllEntitiesOfType<Mafi.Base.Prototypes.Buildings.BarrierEntity>())
+        {
+            if (buoy.Prototype is NavBuoyProto && !buoy.IsDestroyed && buoy.IsConstructed)
+            {
+                options.Add(buoy.Id.Value);
             }
         }
         addStopDropdown.SetOptions(options);

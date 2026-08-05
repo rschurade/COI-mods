@@ -322,7 +322,7 @@ internal class ShippingCommandsProcessor
                 cmd.SetResultSuccess();
                 return;
             case ModifyLineCmd.ACTION_ADD_STOP:
-                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal stop))
+                if (tryGetLineStop(cmd.TargetId, out Mafi.Core.Entities.Static.StaticEntity stop))
                 {
                     m_shippingManager.TryGetLine(cmd.LineId)?.AddStop(stop);
                     cmd.SetResultSuccess();
@@ -330,7 +330,8 @@ internal class ShippingCommandsProcessor
                 }
                 break;
             case ModifyLineCmd.ACTION_REMOVE_STOP:
-                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal removed))
+                if (tryGetLineStop(cmd.TargetId,
+                    out Mafi.Core.Entities.Static.StaticEntity removed))
                 {
                     m_shippingManager.TryGetLine(cmd.LineId)?.RemoveStop(removed);
                     cmd.SetResultSuccess();
@@ -366,5 +367,17 @@ internal class ShippingCommandsProcessor
                 break;
         }
         cmd.SetResultError("Failed to modify shipping line.");
+    }
+
+    /// <summary>Valid line stops: local terminals (dock + transfer) and navigation buoys.</summary>
+    private bool tryGetLineStop(EntityId id, out Mafi.Core.Entities.Static.StaticEntity stop)
+    {
+        if (m_entitiesManager.TryGetEntity(id, out stop)
+            && (stop is LocalTerminal || stop.Prototype is Lines.NavBuoyProto))
+        {
+            return true;
+        }
+        stop = null;
+        return false;
     }
 }

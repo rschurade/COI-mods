@@ -5,6 +5,8 @@ using Mafi.Core.Buildings;
 using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
+using Mafi.Core.Entities.Static;
+using Mafi.Core.PathFinding;
 using Mafi.Core.UiState;
 using Mafi.Localization;
 using Mafi.Serialization;
@@ -28,13 +30,18 @@ namespace ShippingPP.Ships;
 public class LocalShipJobProvider : ICargoShipJobProvider
 {
     /// <summary>Version stamp of this provider's save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 2;
+    private const int SAVE_VERSION = 3;
 
     /// <summary>Ticks of crane inactivity before the ship considers the exchange finished.</summary>
     private const int IDLE_SETTLE_TICKS = 30;
 
+    /// <summary>How close (tiles) a ship aims at / must get to a buoy waypoint. Generous because
+    /// buoys occupy their tile and ships have large pathfinding clearance boxes.</summary>
+    private const int WAYPOINT_TOLERANCE = 20;
+
     private readonly CargoShipV2 m_ship;
-    private CargoDepot m_target;
+    /// <summary>Current destination: a terminal (dock) or a navigation buoy (sail near).</summary>
+    private StaticEntity m_target;
     private int m_idleTicks;
     private bool m_lowFuel;
     /// <summary>Index of the line stop the ship is heading for (line-assigned ships only).</summary>
@@ -73,13 +80,42 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
+        Lines.ShippingLine line = null;
+        int? lineId = manager.GetLineIdFor(m_ship);
+        if (lineId.HasValue)
+        {
+            line = manager.TryGetLine(lineId.Value);
+            if (line != null && !line.HasUsableStops)
+            {
+                line = null;
+            }
+        }
+
         CargoDepot home = m_ship.AssignedDepot.ValueOrNull;
         if (!m_ship.IsDocked)
         {
-            // Between docks with no active job (load, failed docking, blocked route): resume
-            // toward the current target, else head home.
-            CargoDepot destination = m_target != null && !m_target.IsDestroyed ? m_target
-                : (home != null && !home.IsDestroyed ? home : null);
+            if (m_target != null && m_target.IsDestroyed)
+            {
+                m_target = null;
+            }
+            // Buoy waypoint: arriving near it completes the leg; pick the next stop right away.
+            if (m_target != null && m_target.Prototype is Lines.NavBuoyProto)
+            {
+                if (!isNearTarget())
+                {
+                    navigateNear(m_target);
+                    return;
+                }
+                m_target = null;
+            }
+            if (m_target == null && line != null)
+            {
+                stepAlongLine(line, null, manager);
+                return;
+            }
+            // Resume toward the current terminal target, else head home.
+            CargoDepot destination = (m_target as CargoDepot)
+                ?? (home != null && !home.IsDestroyed ? home : null);
             if (destination != null && !destination.IsAccessBlocked)
             {
                 m_ship.NavigateToDock(destination);
@@ -109,14 +145,9 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
 
         // Line mode: cycle the assigned line's stops; the network dispatcher is not consulted.
-        int? lineId = manager.GetLineIdFor(m_ship);
-        if (lineId.HasValue)
+        if (line != null)
         {
-            Lines.ShippingLine line = manager.TryGetLine(lineId.Value);
-            if (line != null && line.HasUsableStops)
-            {
-                stepAlongLine(line, dockedAt, manager);
-            }
+            stepAlongLine(line, dockedAt, manager);
             return;
         }
 
@@ -141,20 +172,21 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
     }
 
-    /// <summary>Advances to the next live line stop that is not the current dock and sails there
-    /// once its dock is reservable (waiting docked otherwise).</summary>
+    /// <summary>Advances to the next live line stop (terminal or buoy) that is not the current
+    /// dock and heads there — terminals require a dock reservation and leg fuel, buoys are free
+    /// fly-bys (waiting at the current position otherwise).</summary>
     private void stepAlongLine(Lines.ShippingLine line, CargoDepot dockedAt,
         ShippingManager manager)
     {
-        CargoDepot target = null;
+        StaticEntity target = null;
         for (int attempts = 0; attempts < line.StopCount; attempts++)
         {
             if (m_lineStopIndex >= line.StopCount)
             {
                 m_lineStopIndex = 0;
             }
-            CargoDepot stop = line.StopAtOrNull(m_lineStopIndex);
-            if (stop == null || stop.IsDestroyed || stop == dockedAt)
+            StaticEntity stop = line.StopAtOrNull(m_lineStopIndex);
+            if (stop == null || stop.IsDestroyed || (dockedAt != null && stop == dockedAt))
             {
                 m_lineStopIndex++;
                 continue;
@@ -166,13 +198,48 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         {
             return;
         }
-        if (manager.TryReserveDock(target, m_ship) && tryConsumeLegFuel())
+        if (target.Prototype is Lines.NavBuoyProto)
         {
             m_target = target;
             m_idleTicks = 0;
             m_lineStopIndex++;
-            m_ship.NavigateToDock(target);
+            navigateNear(target);
+            return;
         }
+        var terminal = target as CargoDepot;
+        if (terminal == null)
+        {
+            m_lineStopIndex++;
+            return;
+        }
+        if (manager.TryReserveDock(terminal, m_ship) && tryConsumeLegFuel())
+        {
+            m_target = terminal;
+            m_idleTicks = 0;
+            m_lineStopIndex++;
+            m_ship.NavigateToDock(terminal);
+        }
+    }
+
+    /// <summary>Sails toward a point near the buoy (goal snapped to the ship pathfinder's 4-tile
+    /// grid, generous tolerance so the buoy's own footprint never blocks arrival).</summary>
+    private void navigateNear(StaticEntity buoy)
+    {
+        Tile2i tile = ShipsClearancePathabilityProvider.GetFineChunkCornerTile(
+            buoy.Position2f.Tile2i);
+        var goal = m_ship.JobsContext.VehicleGoalsFactory.CreateGoal(tile,
+            WAYPOINT_TOLERANCE.Tiles(), isShip: true);
+        m_ship.JobsContext.NavigateToJobFactory.EnqueueJob(m_ship, goal);
+    }
+
+    private bool isNearTarget()
+    {
+        Tile2i shipTile = m_ship.Position2f.Tile2i;
+        Tile2i targetTile = m_target.Position2f.Tile2i;
+        int dx = shipTile.X - targetTile.X;
+        int dy = shipTile.Y - targetTile.Y;
+        int reach = WAYPOINT_TOLERANCE + 8;
+        return dx * dx + dy * dy <= reach * reach;
     }
 
     private bool isExchangeRunning(CargoDepot terminal)
@@ -288,7 +355,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         writer.WriteBool(m_target != null);
         if (m_target != null)
         {
-            CargoDepot.Serialize(m_target, writer);
+            writer.WriteGeneric(m_target);
         }
         writer.WriteInt(m_idleTicks);
         writer.WriteBool(m_lowFuel);
@@ -312,7 +379,10 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         reader.SetField(this, "m_ship", CargoShipV2.Deserialize(reader));
         if (reader.ReadBool())
         {
-            m_target = CargoDepot.Deserialize(reader);
+            // v2 and older stored the target with the CargoDepot serializer directly.
+            m_target = (version >= 3)
+                ? reader.ReadGenericAs<StaticEntity>()
+                : CargoDepot.Deserialize(reader);
         }
         m_idleTicks = reader.ReadInt();
         m_lowFuel = reader.ReadBool();
