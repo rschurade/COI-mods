@@ -1,0 +1,383 @@
+using System;
+using Mafi;
+using Mafi.Core;
+using Mafi.Core.Entities;
+using Mafi.Core.Input;
+using Mafi.Serialization;
+
+namespace ShippingPP.Terminals;
+
+/// <summary>
+/// Starts (or cancels) ship construction at a local terminal. Sent by the terminal window's
+/// build-ship button; routed through the input-command pipeline so it is deterministic and
+/// replay/save safe like every vanilla command.
+/// </summary>
+public class SetShipConstructionCmd : InputCommand
+{
+    public readonly EntityId TerminalId;
+
+    public readonly bool IsConstructing;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetShipConstructionCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetShipConstructionCmd)obj).DeserializeData(reader);
+
+    public SetShipConstructionCmd(EntityId terminalId, bool isConstructing)
+    {
+        TerminalId = terminalId;
+        IsConstructing = isConstructing;
+    }
+
+    public static void Serialize(SetShipConstructionCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(TerminalId, writer);
+        writer.WriteBool(IsConstructing);
+    }
+
+    public new static SetShipConstructionCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetShipConstructionCmd obj,
+            (Func<BlobReader, Type, SetShipConstructionCmd>)null,
+            (Func<BlobReader, string, SetShipConstructionCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "TerminalId", EntityId.Deserialize(reader));
+        reader.SetField(this, "IsConstructing", reader.ReadBool());
+    }
+}
+
+/// <summary>Sets a terminal module's direction: export ("offer") or import ("request").</summary>
+public class SetModuleDirectionCmd : InputCommand
+{
+    public readonly EntityId ModuleId;
+
+    public readonly bool IsExport;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetModuleDirectionCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetModuleDirectionCmd)obj).DeserializeData(reader);
+
+    public SetModuleDirectionCmd(EntityId moduleId, bool isExport)
+    {
+        ModuleId = moduleId;
+        IsExport = isExport;
+    }
+
+    public static void Serialize(SetModuleDirectionCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(ModuleId, writer);
+        writer.WriteBool(IsExport);
+    }
+
+    public new static SetModuleDirectionCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetModuleDirectionCmd obj,
+            (Func<BlobReader, Type, SetModuleDirectionCmd>)null,
+            (Func<BlobReader, string, SetModuleDirectionCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "ModuleId", EntityId.Deserialize(reader));
+        reader.SetField(this, "IsExport", reader.ReadBool());
+    }
+}
+
+/// <summary>Sets a terminal module's network threshold (percent; 100 = always active).</summary>
+public class SetModuleThresholdCmd : InputCommand
+{
+    public readonly EntityId ModuleId;
+
+    public readonly int Percent;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetModuleThresholdCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetModuleThresholdCmd)obj).DeserializeData(reader);
+
+    public SetModuleThresholdCmd(EntityId moduleId, int percent)
+    {
+        ModuleId = moduleId;
+        Percent = percent;
+    }
+
+    public static void Serialize(SetModuleThresholdCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(ModuleId, writer);
+        writer.WriteInt(Percent);
+    }
+
+    public new static SetModuleThresholdCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetModuleThresholdCmd obj,
+            (Func<BlobReader, Type, SetModuleThresholdCmd>)null,
+            (Func<BlobReader, string, SetModuleThresholdCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "ModuleId", EntityId.Deserialize(reader));
+        reader.SetField(this, "Percent", reader.ReadInt());
+    }
+}
+
+/// <summary>Edits shipping lines: create/delete lines, add/remove stops, (un)assign ships.</summary>
+public class ModifyLineCmd : InputCommand
+{
+    public const byte ACTION_CREATE = 0;
+    public const byte ACTION_DELETE = 1;
+    public const byte ACTION_ADD_STOP = 2;
+    public const byte ACTION_REMOVE_STOP = 3;
+    public const byte ACTION_ASSIGN_SHIP = 4;
+    public const byte ACTION_UNASSIGN_SHIP = 5;
+    public const byte ACTION_RENAME = 6;
+
+    public readonly byte Action;
+
+    public readonly int LineId;
+
+    /// <summary>Terminal id for stop actions, ship id for assignment actions.</summary>
+    public readonly EntityId TargetId;
+
+    /// <summary>New name for the rename action.</summary>
+    public readonly string Name;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((ModifyLineCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((ModifyLineCmd)obj).DeserializeData(reader);
+
+    public ModifyLineCmd(byte action, int lineId, EntityId targetId, string name = "")
+    {
+        Action = action;
+        LineId = lineId;
+        TargetId = targetId;
+        Name = name ?? "";
+    }
+
+    public static void Serialize(ModifyLineCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        writer.WriteByte(Action);
+        writer.WriteInt(LineId);
+        EntityId.Serialize(TargetId, writer);
+        writer.WriteString(Name);
+    }
+
+    public new static ModifyLineCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out ModifyLineCmd obj,
+            (Func<BlobReader, Type, ModifyLineCmd>)null,
+            (Func<BlobReader, string, ModifyLineCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "Action", reader.ReadByte());
+        reader.SetField(this, "LineId", reader.ReadInt());
+        reader.SetField(this, "TargetId", EntityId.Deserialize(reader));
+        reader.SetField(this, "Name", reader.ReadString());
+    }
+}
+
+/// <summary>Processes the mod's input commands (registered as all interfaces in mod DI).</summary>
+internal class ShippingCommandsProcessor
+    : ICommandProcessor<SetShipConstructionCmd>, IAction<SetShipConstructionCmd>,
+      ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>,
+      ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>,
+      ICommandProcessor<ModifyLineCmd>, IAction<ModifyLineCmd>
+{
+    private readonly EntitiesManager m_entitiesManager;
+    private readonly ShippingManager m_shippingManager;
+
+    public ShippingCommandsProcessor(EntitiesManager entitiesManager,
+        ShippingManager shippingManager)
+    {
+        m_entitiesManager = entitiesManager;
+        m_shippingManager = shippingManager;
+    }
+
+    void IAction<SetShipConstructionCmd>.Invoke(SetShipConstructionCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.TerminalId, out LocalTerminal terminal))
+        {
+            cmd.SetResultError($"Failed to get local terminal with ID {cmd.TerminalId}.");
+            return;
+        }
+        if (cmd.IsConstructing)
+        {
+            string error = m_shippingManager.StartShipConstruction(terminal);
+            if (error != null)
+            {
+                cmd.SetResultError(error);
+                return;
+            }
+        }
+        else
+        {
+            m_shippingManager.CancelShipConstruction(terminal);
+        }
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SetModuleDirectionCmd>.Invoke(SetModuleDirectionCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.ModuleId,
+            out Mafi.Core.Buildings.Cargo.Modules.CargoDepotModule module)
+            || !(module.Depot.ValueOrNull is LocalTerminal))
+        {
+            cmd.SetResultError($"Failed to get terminal module with ID {cmd.ModuleId}.");
+            return;
+        }
+        m_shippingManager.SetModuleExport(module, cmd.IsExport);
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SetModuleThresholdCmd>.Invoke(SetModuleThresholdCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.ModuleId,
+            out Mafi.Core.Buildings.Cargo.Modules.CargoDepotModule module)
+            || !(module.Depot.ValueOrNull is LocalTerminal))
+        {
+            cmd.SetResultError($"Failed to get terminal module with ID {cmd.ModuleId}.");
+            return;
+        }
+        m_shippingManager.SetModuleThreshold(module, cmd.Percent);
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<ModifyLineCmd>.Invoke(ModifyLineCmd cmd)
+    {
+        switch (cmd.Action)
+        {
+            case ModifyLineCmd.ACTION_CREATE:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal first))
+                {
+                    m_shippingManager.CreateLine(first);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_DELETE:
+                m_shippingManager.DeleteLine(cmd.LineId);
+                cmd.SetResultSuccess();
+                return;
+            case ModifyLineCmd.ACTION_ADD_STOP:
+                if (tryGetLineStop(cmd.TargetId, out Mafi.Core.Entities.Static.StaticEntity stop))
+                {
+                    m_shippingManager.TryGetLine(cmd.LineId)?.AddStop(stop);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_REMOVE_STOP:
+                if (tryGetLineStop(cmd.TargetId,
+                    out Mafi.Core.Entities.Static.StaticEntity removed))
+                {
+                    m_shippingManager.TryGetLine(cmd.LineId)?.RemoveStop(removed);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_ASSIGN_SHIP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId,
+                    out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 ship))
+                {
+                    m_shippingManager.SetShipLine(ship, cmd.LineId);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_UNASSIGN_SHIP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId,
+                    out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 unassigned))
+                {
+                    m_shippingManager.SetShipLine(unassigned, null);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_RENAME:
+                Lines.ShippingLine renamed = m_shippingManager.TryGetLine(cmd.LineId);
+                if (renamed != null && !string.IsNullOrEmpty(cmd.Name))
+                {
+                    renamed.Name = cmd.Name;
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+        }
+        cmd.SetResultError("Failed to modify shipping line.");
+    }
+
+    /// <summary>Valid line stops: local terminals (dock + transfer) and navigation buoys.</summary>
+    private bool tryGetLineStop(EntityId id, out Mafi.Core.Entities.Static.StaticEntity stop)
+    {
+        if (m_entitiesManager.TryGetEntity(id, out stop)
+            && (stop is LocalTerminal || stop.Prototype is Lines.NavBuoyProto))
+        {
+            return true;
+        }
+        stop = null;
+        return false;
+    }
+}

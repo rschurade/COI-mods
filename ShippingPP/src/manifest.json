@@ -1,0 +1,14 @@
+{
+  "id": "ShippingPP",
+  "version": "0.1.0",
+  "display_name": "Shipping++",
+  "description_short": "Local cargo shipping: ships haul products between cargo terminals on your island.",
+  "description_long": "Adds local cargo terminals and ships that haul products between them across the water of your own island.\n\nBuild a local cargo terminal (reusing the cargo depot model) at two or more coastal spots, set up terminal modules to offer or request products, and local cargo ships automatically sail between them — real ships with real water pathfinding, docking and crane transfers, just like the vanilla world-trade cargo ships.\n\nShips are built at the terminal: press the build-ship button and deliver the construction materials, then the terminal's ship enters service. Ships consume fuel per journey like vanilla cargo ships.",
+  "authors": "Roest",
+  "primary_dlls": [ "0Harmony.dll", "ShippingPP.dll" ],
+  "non_locking_dll_load": true,
+  "can_add_to_saved_game": true,
+  "can_remove_from_saved_game": false,
+  "min_game_version": "0.8.5",
+  "max_verified_game_version": "0.8.6"
+}
