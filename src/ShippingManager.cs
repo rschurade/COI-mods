@@ -39,7 +39,12 @@ namespace ShippingPP;
 public class ShippingManager
 {
     /// <summary>Version stamp of this manager's own save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 3;
+    private const int SAVE_VERSION = 4;
+
+    /// <summary>A trip must move at least this share of the ship's cargo capacity to be worth
+    /// dispatching (the train network's "wait for a worthwhile load" rule). A ship whose whole
+    /// current cargo can be dumped at the target is always allowed to sail.</summary>
+    private const int MIN_LOAD_PERCENT = 20;
 
     /// <summary>Extra build time on top of material delivery.</summary>
     private static readonly Duration BUILD_EXTRA_DURATION = Duration.FromSec(60);
@@ -61,6 +66,12 @@ public class ShippingManager
     private readonly Dict<CargoDepot, CargoShipV2> m_inboundShips;
     /// <summary>Terminal modules the player switched to export ("offer") mode; absent = import.</summary>
     private readonly Set<CargoDepotModule> m_exportModules;
+    /// <summary>Per-module network threshold in percent (absent = 100 = always active). Vanilla
+    /// train semantics: an import module requests while filled below the threshold, an export
+    /// module offers while filled above (100 - threshold).</summary>
+    private readonly Dict<CargoDepotModule, int> m_moduleThresholds;
+    /// <summary>Tick each terminal was last chosen as a dispatch target (round-robin fairness).</summary>
+    private readonly Dict<CargoDepot, int> m_lastServed;
     private readonly Lyst<CargoDepot> m_toRemoveTmp;
     private readonly EntitiesManager m_entitiesManager;
     private readonly ISimLoopEvents m_simLoopEvents;
@@ -85,6 +96,8 @@ public class ShippingManager
         m_localShips = new Set<CargoShipV2>();
         m_inboundShips = new Dict<CargoDepot, CargoShipV2>();
         m_exportModules = new Set<CargoDepotModule>();
+        m_moduleThresholds = new Dict<CargoDepotModule, int>();
+        m_lastServed = new Dict<CargoDepot, int>();
         m_toRemoveTmp = new Lyst<CargoDepot>();
         m_entitiesManager = entitiesManager;
         m_simLoopEvents = simLoopEvents;
@@ -132,6 +145,25 @@ public class ShippingManager
         }
     }
 
+    /// <summary>Network threshold in percent (100 = always active, the default).</summary>
+    public int GetModuleThreshold(CargoDepotModule module)
+    {
+        return m_moduleThresholds.TryGetValue(module, out int value) ? value : 100;
+    }
+
+    public void SetModuleThreshold(CargoDepotModule module, int percent)
+    {
+        percent = percent.Clamp(10, 100);
+        if (percent == 100)
+        {
+            m_moduleThresholds.Remove(module);
+        }
+        else
+        {
+            m_moduleThresholds[module] = percent;
+        }
+    }
+
     /// <summary>
     /// Brings a module's truck-logistics registration in line with its direction: an export
     /// module consumes factory products (global input, truck deliveries enabled), an import
@@ -166,6 +198,8 @@ public class ShippingManager
     private void syncModuleDirections()
     {
         m_exportModules.RemoveWhere(m => m.IsDestroyed);
+        pruneDestroyedKeys(m_moduleThresholds);
+        pruneDestroyedKeys(m_lastServed);
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
             foreach (Option<CargoDepotModule> slot in terminal.Modules)
@@ -209,7 +243,22 @@ public class ShippingManager
             m_inboundShips.Remove(stale);
         }
 
-        CargoDepot best = null;
+        // Min-load gate: the trip must move at least MIN_LOAD_PERCENT of the ship's capacity —
+        // unless the target can absorb the ship's whole current cargo (never strand goods).
+        Quantity shipCapacityTotal = Quantity.Zero;
+        Quantity shipCargoTotal = Quantity.Zero;
+        for (int i = 0; i < ship.Modules.Count; i++)
+        {
+            CargoShipModule module = ship.Modules[i].ValueOrNull;
+            if (module != null)
+            {
+                shipCapacityTotal += module.Capacity;
+                shipCargoTotal += module.Quantity;
+            }
+        }
+        int minTripValue = shipCapacityTotal.Value * MIN_LOAD_PERCENT / 100;
+
+        var candidates = new Lyst<KeyValuePair<CargoDepot, int>>();
         int bestValue = 0;
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
@@ -232,6 +281,7 @@ public class ShippingManager
             }
 
             int value = 0;
+            Quantity deliverable = Quantity.Zero;
             foreach (Option<CargoDepotModule> slot in terminal.Modules)
             {
                 CargoDepotModule module = slot.ValueOrNull;
@@ -240,25 +290,63 @@ public class ShippingManager
                     continue;
                 }
                 ProductProto product = module.StoredProduct.Value;
+                int fillPercent = module.Capacity.IsPositive
+                    ? module.CurrentQuantity.Value * 100 / module.Capacity.Value
+                    : 0;
+                int threshold = GetModuleThreshold(module);
                 if (IsExportModule(module))
                 {
-                    // The terminal offers: worth fetching what the ship has room for.
-                    value += shipFreeCapacityFor(ship, product).Min(moduleStock(module)).Value;
+                    // The terminal offers: worth fetching, while filled above (100 - threshold).
+                    if (fillPercent > 100 - threshold)
+                    {
+                        value += shipFreeCapacityFor(ship, product).Min(moduleStock(module)).Value;
+                    }
                 }
                 else
                 {
-                    // The terminal requests: worth delivering what the ship carries.
-                    value += shipQuantityOf(ship, product).Min(module.UsableCapacity).Value;
+                    // The terminal requests: worth delivering, while filled below the threshold.
+                    if (fillPercent < threshold)
+                    {
+                        Quantity d = shipQuantityOf(ship, product).Min(module.UsableCapacity);
+                        value += d.Value;
+                        deliverable += d;
+                    }
                 }
             }
-            if (value > bestValue)
+            if (value <= 0)
             {
-                bestValue = value;
-                best = terminal;
+                continue;
+            }
+            bool fullDump = shipCargoTotal.IsPositive && deliverable >= shipCargoTotal;
+            if (value < minTripValue && !fullDump)
+            {
+                continue;
+            }
+            candidates.Add(new KeyValuePair<CargoDepot, int>(terminal, value));
+            bestValue = bestValue.Max(value);
+        }
+
+        // Among candidates close to the best value (within 20%), prefer the least recently
+        // served terminal so equal requesters take turns instead of starving.
+        CargoDepot best = null;
+        int bestLastServed = int.MaxValue;
+        foreach (KeyValuePair<CargoDepot, int> candidate in candidates)
+        {
+            if (candidate.Value * 5 < bestValue * 4)
+            {
+                continue;
+            }
+            int lastServed = m_lastServed.TryGetValue(candidate.Key, out int tick)
+                ? tick : int.MinValue;
+            if (best == null || lastServed < bestLastServed)
+            {
+                best = candidate.Key;
+                bestLastServed = lastServed;
             }
         }
         if (best != null)
         {
+            m_lastServed[best] = m_tickCounter;
             m_inboundShips[best] = ship;
         }
         return best;
@@ -461,6 +549,26 @@ public class ShippingManager
         m_localShips.RemoveWhere(ship => ship.IsDestroyed);
     }
 
+    private static void pruneDestroyedKeys<TKey>(Dict<TKey, int> dict)
+        where TKey : Mafi.Core.Entities.IEntity
+    {
+        Lyst<TKey> toRemove = null;
+        foreach (KeyValuePair<TKey, int> pair in dict)
+        {
+            if (pair.Key.IsDestroyed)
+            {
+                (toRemove = toRemove ?? new Lyst<TKey>()).Add(pair.Key);
+            }
+        }
+        if (toRemove != null)
+        {
+            foreach (TKey key in toRemove)
+            {
+                dict.Remove(key);
+            }
+        }
+    }
+
     private void entityRemoved(IStaticEntity entity)
     {
         if (entity is CargoDepot depot && m_builds.TryGetValue(depot, out ShipBuildState state))
@@ -492,6 +600,9 @@ public class ShippingManager
         BuildBufferPriorityProvider.Serialize(m_priorityProvider, writer);
         Dict<CargoDepot, CargoShipV2>.Serialize(m_inboundShips, writer);
         Set<CargoDepotModule>.Serialize(m_exportModules, writer);
+        Dict<CargoDepotModule, int>.Serialize(m_moduleThresholds, writer);
+        Dict<CargoDepot, int>.Serialize(m_lastServed, writer);
+        writer.WriteInt(m_tickCounter);
     }
 
     public static ShippingManager Deserialize(BlobReader reader)
@@ -524,6 +635,16 @@ public class ShippingManager
         reader.SetField(this, "m_exportModules", (version >= 3)
             ? Set<CargoDepotModule>.Deserialize(reader)
             : new Set<CargoDepotModule>());
+        reader.SetField(this, "m_moduleThresholds", (version >= 4)
+            ? Dict<CargoDepotModule, int>.Deserialize(reader)
+            : new Dict<CargoDepotModule, int>());
+        reader.SetField(this, "m_lastServed", (version >= 4)
+            ? Dict<CargoDepot, int>.Deserialize(reader)
+            : new Dict<CargoDepot, int>());
+        if (version >= 4)
+        {
+            m_tickCounter = reader.ReadInt();
+        }
         s_current = this;
     }
 

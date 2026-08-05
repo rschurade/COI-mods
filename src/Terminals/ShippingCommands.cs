@@ -115,10 +115,63 @@ public class SetModuleDirectionCmd : InputCommand
     }
 }
 
+/// <summary>Sets a terminal module's network threshold (percent; 100 = always active).</summary>
+public class SetModuleThresholdCmd : InputCommand
+{
+    public readonly EntityId ModuleId;
+
+    public readonly int Percent;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetModuleThresholdCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetModuleThresholdCmd)obj).DeserializeData(reader);
+
+    public SetModuleThresholdCmd(EntityId moduleId, int percent)
+    {
+        ModuleId = moduleId;
+        Percent = percent;
+    }
+
+    public static void Serialize(SetModuleThresholdCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(ModuleId, writer);
+        writer.WriteInt(Percent);
+    }
+
+    public new static SetModuleThresholdCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetModuleThresholdCmd obj,
+            (Func<BlobReader, Type, SetModuleThresholdCmd>)null,
+            (Func<BlobReader, string, SetModuleThresholdCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "ModuleId", EntityId.Deserialize(reader));
+        reader.SetField(this, "Percent", reader.ReadInt());
+    }
+}
+
 /// <summary>Processes the mod's input commands (registered as all interfaces in mod DI).</summary>
 internal class ShippingCommandsProcessor
     : ICommandProcessor<SetShipConstructionCmd>, IAction<SetShipConstructionCmd>,
-      ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>
+      ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>,
+      ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>
 {
     private readonly EntitiesManager m_entitiesManager;
     private readonly ShippingManager m_shippingManager;
@@ -163,6 +216,19 @@ internal class ShippingCommandsProcessor
             return;
         }
         m_shippingManager.SetModuleExport(module, cmd.IsExport);
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SetModuleThresholdCmd>.Invoke(SetModuleThresholdCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.ModuleId,
+            out Mafi.Core.Buildings.Cargo.Modules.CargoDepotModule module)
+            || !(module.Depot.ValueOrNull is LocalTerminal))
+        {
+            cmd.SetResultError($"Failed to get terminal module with ID {cmd.ModuleId}.");
+            return;
+        }
+        m_shippingManager.SetModuleThreshold(module, cmd.Percent);
         cmd.SetResultSuccess();
     }
 }

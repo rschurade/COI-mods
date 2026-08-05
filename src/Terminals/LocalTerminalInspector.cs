@@ -158,10 +158,30 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
                 CargoDepotModule module = moduleAt(i);
                 return module != null && m_shippingManager.IsExportModule(module);
             });
+            var thresholdDropdown = new Dropdown<int>(
+                (int opt, int idx, bool inDropdown) => new Label($"{opt} %".AsLoc()))
+                .SetOptions(new[] { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 });
+            thresholdDropdown.Tooltip(("Network threshold: an import module requests cargo only "
+                + "while filled below this, an export module offers only while filled above "
+                + "(100 % minus this). 100 % = always active.").AsLoc());
+            thresholdDropdown.OnValueChanged(delegate(int value, int _)
+            {
+                CargoDepotModule module = moduleAt(i);
+                if (module != null && m_shippingManager.GetModuleThreshold(module) != value)
+                {
+                    ScheduleCommand(new SetModuleThresholdCmd(module.Id, value));
+                }
+            });
+            thresholdDropdown.ObserveValueDropdown(delegate
+            {
+                CargoDepotModule module = moduleAt(i);
+                return module != null ? m_shippingManager.GetModuleThreshold(module) : 100;
+            });
             var slotRow = new Row(4.pt())
             {
                 slotIcon,
-                slotToggle
+                slotToggle,
+                thresholdDropdown
             };
             slotsColumn.Add(slotRow);
             this.Observe(delegate
