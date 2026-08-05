@@ -167,11 +167,84 @@ public class SetModuleThresholdCmd : InputCommand
     }
 }
 
+/// <summary>Edits shipping lines: create/delete lines, add/remove stops, (un)assign ships.</summary>
+public class ModifyLineCmd : InputCommand
+{
+    public const byte ACTION_CREATE = 0;
+    public const byte ACTION_DELETE = 1;
+    public const byte ACTION_ADD_STOP = 2;
+    public const byte ACTION_REMOVE_STOP = 3;
+    public const byte ACTION_ASSIGN_SHIP = 4;
+    public const byte ACTION_UNASSIGN_SHIP = 5;
+    public const byte ACTION_RENAME = 6;
+
+    public readonly byte Action;
+
+    public readonly int LineId;
+
+    /// <summary>Terminal id for stop actions, ship id for assignment actions.</summary>
+    public readonly EntityId TargetId;
+
+    /// <summary>New name for the rename action.</summary>
+    public readonly string Name;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((ModifyLineCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((ModifyLineCmd)obj).DeserializeData(reader);
+
+    public ModifyLineCmd(byte action, int lineId, EntityId targetId, string name = "")
+    {
+        Action = action;
+        LineId = lineId;
+        TargetId = targetId;
+        Name = name ?? "";
+    }
+
+    public static void Serialize(ModifyLineCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        writer.WriteByte(Action);
+        writer.WriteInt(LineId);
+        EntityId.Serialize(TargetId, writer);
+        writer.WriteString(Name);
+    }
+
+    public new static ModifyLineCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out ModifyLineCmd obj,
+            (Func<BlobReader, Type, ModifyLineCmd>)null,
+            (Func<BlobReader, string, ModifyLineCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "Action", reader.ReadByte());
+        reader.SetField(this, "LineId", reader.ReadInt());
+        reader.SetField(this, "TargetId", EntityId.Deserialize(reader));
+        reader.SetField(this, "Name", reader.ReadString());
+    }
+}
+
 /// <summary>Processes the mod's input commands (registered as all interfaces in mod DI).</summary>
 internal class ShippingCommandsProcessor
     : ICommandProcessor<SetShipConstructionCmd>, IAction<SetShipConstructionCmd>,
       ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>,
-      ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>
+      ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>,
+      ICommandProcessor<ModifyLineCmd>, IAction<ModifyLineCmd>
 {
     private readonly EntitiesManager m_entitiesManager;
     private readonly ShippingManager m_shippingManager;
@@ -230,5 +303,68 @@ internal class ShippingCommandsProcessor
         }
         m_shippingManager.SetModuleThreshold(module, cmd.Percent);
         cmd.SetResultSuccess();
+    }
+
+    void IAction<ModifyLineCmd>.Invoke(ModifyLineCmd cmd)
+    {
+        switch (cmd.Action)
+        {
+            case ModifyLineCmd.ACTION_CREATE:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal first))
+                {
+                    m_shippingManager.CreateLine(first);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_DELETE:
+                m_shippingManager.DeleteLine(cmd.LineId);
+                cmd.SetResultSuccess();
+                return;
+            case ModifyLineCmd.ACTION_ADD_STOP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal stop))
+                {
+                    m_shippingManager.TryGetLine(cmd.LineId)?.AddStop(stop);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_REMOVE_STOP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId, out LocalTerminal removed))
+                {
+                    m_shippingManager.TryGetLine(cmd.LineId)?.RemoveStop(removed);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_ASSIGN_SHIP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId,
+                    out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 ship))
+                {
+                    m_shippingManager.SetShipLine(ship, cmd.LineId);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_UNASSIGN_SHIP:
+                if (m_entitiesManager.TryGetEntity(cmd.TargetId,
+                    out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 unassigned))
+                {
+                    m_shippingManager.SetShipLine(unassigned, null);
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_RENAME:
+                Lines.ShippingLine renamed = m_shippingManager.TryGetLine(cmd.LineId);
+                if (renamed != null && !string.IsNullOrEmpty(cmd.Name))
+                {
+                    renamed.Name = cmd.Name;
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+        }
+        cmd.SetResultError("Failed to modify shipping line.");
     }
 }

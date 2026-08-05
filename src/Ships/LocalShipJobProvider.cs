@@ -28,7 +28,7 @@ namespace ShippingPP.Ships;
 public class LocalShipJobProvider : ICargoShipJobProvider
 {
     /// <summary>Version stamp of this provider's save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 1;
+    private const int SAVE_VERSION = 2;
 
     /// <summary>Ticks of crane inactivity before the ship considers the exchange finished.</summary>
     private const int IDLE_SETTLE_TICKS = 30;
@@ -37,6 +37,8 @@ public class LocalShipJobProvider : ICargoShipJobProvider
     private CargoDepot m_target;
     private int m_idleTicks;
     private bool m_lowFuel;
+    /// <summary>Index of the line stop the ship is heading for (line-assigned ships only).</summary>
+    private int m_lineStopIndex;
 
     private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
         (obj, writer) => ((LocalShipJobProvider)obj).SerializeData(writer);
@@ -106,6 +108,18 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
+        // Line mode: cycle the assigned line's stops; the network dispatcher is not consulted.
+        int? lineId = manager.GetLineIdFor(m_ship);
+        if (lineId.HasValue)
+        {
+            Lines.ShippingLine line = manager.TryGetLine(lineId.Value);
+            if (line != null && line.HasUsableStops)
+            {
+                stepAlongLine(line, dockedAt, manager);
+            }
+            return;
+        }
+
         if (home != null && dockedAt != home)
         {
             // Visit finished — sail home (where the fetched cargo gets unloaded).
@@ -124,6 +138,40 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             m_target = next;
             m_idleTicks = 0;
             m_ship.NavigateToDock(next);
+        }
+    }
+
+    /// <summary>Advances to the next live line stop that is not the current dock and sails there
+    /// once its dock is reservable (waiting docked otherwise).</summary>
+    private void stepAlongLine(Lines.ShippingLine line, CargoDepot dockedAt,
+        ShippingManager manager)
+    {
+        CargoDepot target = null;
+        for (int attempts = 0; attempts < line.StopCount; attempts++)
+        {
+            if (m_lineStopIndex >= line.StopCount)
+            {
+                m_lineStopIndex = 0;
+            }
+            CargoDepot stop = line.StopAtOrNull(m_lineStopIndex);
+            if (stop == null || stop.IsDestroyed || stop == dockedAt)
+            {
+                m_lineStopIndex++;
+                continue;
+            }
+            target = stop;
+            break;
+        }
+        if (target == null)
+        {
+            return;
+        }
+        if (manager.TryReserveDock(target, m_ship) && tryConsumeLegFuel())
+        {
+            m_target = target;
+            m_idleTicks = 0;
+            m_lineStopIndex++;
+            m_ship.NavigateToDock(target);
         }
     }
 
@@ -217,6 +265,11 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         {
             return "Transferring cargo".AsLoc();
         }
+        int? lineId = ShippingManager.Current?.GetLineIdFor(m_ship);
+        if (lineId.HasValue)
+        {
+            return $"On line {lineId.Value}".AsLoc();
+        }
         return "Serving local terminals".AsLoc();
     }
 
@@ -239,6 +292,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
         writer.WriteInt(m_idleTicks);
         writer.WriteBool(m_lowFuel);
+        writer.WriteInt(m_lineStopIndex);
     }
 
     public static LocalShipJobProvider Deserialize(BlobReader reader)
@@ -254,7 +308,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
 
     protected virtual void DeserializeData(BlobReader reader)
     {
-        reader.ReadInt();
+        int version = reader.ReadInt();
         reader.SetField(this, "m_ship", CargoShipV2.Deserialize(reader));
         if (reader.ReadBool())
         {
@@ -262,5 +316,9 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
         m_idleTicks = reader.ReadInt();
         m_lowFuel = reader.ReadBool();
+        if (version >= 2)
+        {
+            m_lineStopIndex = reader.ReadInt();
+        }
     }
 }

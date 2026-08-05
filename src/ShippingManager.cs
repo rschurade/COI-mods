@@ -39,7 +39,7 @@ namespace ShippingPP;
 public class ShippingManager
 {
     /// <summary>Version stamp of this manager's own save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 4;
+    private const int SAVE_VERSION = 5;
 
     /// <summary>A trip must move at least this share of the ship's cargo capacity to be worth
     /// dispatching (the train network's "wait for a worthwhile load" rule). A ship whose whole
@@ -72,6 +72,11 @@ public class ShippingManager
     private readonly Dict<CargoDepotModule, int> m_moduleThresholds;
     /// <summary>Tick each terminal was last chosen as a dispatch target (round-robin fairness).</summary>
     private readonly Dict<CargoDepot, int> m_lastServed;
+    /// <summary>Player-defined shipping lines (ordered cyclic stop lists).</summary>
+    private readonly Lyst<Lines.ShippingLine> m_lines;
+    /// <summary>Which line each assigned ship follows (absent = automatic network dispatch).</summary>
+    private readonly Dict<CargoShipV2, int> m_shipLines;
+    private int m_nextLineId;
     private readonly Lyst<CargoDepot> m_toRemoveTmp;
     private readonly EntitiesManager m_entitiesManager;
     private readonly ISimLoopEvents m_simLoopEvents;
@@ -98,6 +103,9 @@ public class ShippingManager
         m_exportModules = new Set<CargoDepotModule>();
         m_moduleThresholds = new Dict<CargoDepotModule, int>();
         m_lastServed = new Dict<CargoDepot, int>();
+        m_lines = new Lyst<Lines.ShippingLine>();
+        m_shipLines = new Dict<CargoShipV2, int>();
+        m_nextLineId = 1;
         m_toRemoveTmp = new Lyst<CargoDepot>();
         m_entitiesManager = entitiesManager;
         m_simLoopEvents = simLoopEvents;
@@ -200,6 +208,22 @@ public class ShippingManager
         m_exportModules.RemoveWhere(m => m.IsDestroyed);
         pruneDestroyedKeys(m_moduleThresholds);
         pruneDestroyedKeys(m_lastServed);
+        foreach (Lines.ShippingLine line in m_lines)
+        {
+            line.PruneDestroyedStops();
+        }
+        var deadAssignments = new Lyst<CargoShipV2>();
+        foreach (KeyValuePair<CargoShipV2, int> pair in m_shipLines)
+        {
+            if (pair.Key.IsDestroyed || TryGetLine(pair.Value) == null)
+            {
+                deadAssignments.Add(pair.Key);
+            }
+        }
+        foreach (CargoShipV2 dead in deadAssignments)
+        {
+            m_shipLines.Remove(dead);
+        }
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
             foreach (Option<CargoDepotModule> slot in terminal.Modules)
@@ -219,16 +243,96 @@ public class ShippingManager
         return s_current != null && s_current.m_localShips.Contains(ship);
     }
 
-    /// <summary>
-    /// The dispatcher: picks the most valuable terminal for the given ship to visit, or null.
-    /// Value of a visit = products the ship could deliver there (ship cargo × the terminal's
-    /// import modules' free capacity) plus products it could fetch (the terminal's export
-    /// modules' stock × the ship's free module capacity for that product). Only terminals with
-    /// a free, unreserved, accessible dock qualify; the chosen dock is reserved for the ship.
-    /// </summary>
-    public CargoDepot FindTradeTargetFor(CargoShipV2 ship)
+    // ------------------------------------------------------------------ lines
+
+    internal Lyst<Lines.ShippingLine> AllLines => m_lines;
+
+    public Lines.ShippingLine TryGetLine(int id)
     {
-        // Release this ship's previous reservation and prune stale ones.
+        foreach (Lines.ShippingLine line in m_lines)
+        {
+            if (line.Id == id)
+            {
+                return line;
+            }
+        }
+        return null;
+    }
+
+    public Lines.ShippingLine CreateLine(CargoDepot firstStop)
+    {
+        var line = new Lines.ShippingLine(m_nextLineId++);
+        line.AddStop(firstStop);
+        m_lines.Add(line);
+        return line;
+    }
+
+    public void DeleteLine(int id)
+    {
+        for (int i = 0; i < m_lines.Count; i++)
+        {
+            if (m_lines[i].Id == id)
+            {
+                m_lines.RemoveAt(i);
+                break;
+            }
+        }
+        // Unassign ships that followed it (they fall back to network dispatch).
+        var toUnassign = new Lyst<CargoShipV2>();
+        foreach (KeyValuePair<CargoShipV2, int> pair in m_shipLines)
+        {
+            if (pair.Value == id)
+            {
+                toUnassign.Add(pair.Key);
+            }
+        }
+        foreach (CargoShipV2 ship in toUnassign)
+        {
+            m_shipLines.Remove(ship);
+        }
+    }
+
+    /// <summary>The line id the ship is assigned to, or null (= automatic network dispatch).</summary>
+    public int? GetLineIdFor(CargoShipV2 ship)
+    {
+        return m_shipLines.TryGetValue(ship, out int id) ? id : (int?)null;
+    }
+
+    public void SetShipLine(CargoShipV2 ship, int? lineId)
+    {
+        if (lineId.HasValue && TryGetLine(lineId.Value) != null)
+        {
+            m_shipLines[ship] = lineId.Value;
+        }
+        else
+        {
+            m_shipLines.Remove(ship);
+        }
+    }
+
+    /// <summary>
+    /// Reserves the terminal's dock for the ship (one inbound ship per dock; physically occupied
+    /// docks refused). Shared by line ships and the network dispatcher.
+    /// </summary>
+    public bool TryReserveDock(CargoDepot terminal, CargoShipV2 ship)
+    {
+        pruneReservations(ship);
+        if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked
+            || isDockOccupiedByOther(terminal, ship))
+        {
+            return false;
+        }
+        if (m_inboundShips.TryGetValue(terminal, out CargoShipV2 other) && other != ship)
+        {
+            return false;
+        }
+        m_inboundShips[terminal] = ship;
+        return true;
+    }
+
+    /// <summary>Releases this ship's stale reservations (and prunes globally stale ones).</summary>
+    private void pruneReservations(CargoShipV2 ship)
+    {
         m_toRemoveTmp.Clear();
         foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_inboundShips)
         {
@@ -242,6 +346,32 @@ public class ShippingManager
         {
             m_inboundShips.Remove(stale);
         }
+    }
+
+    private bool isDockOccupiedByOther(CargoDepot terminal, CargoShipV2 ship)
+    {
+        foreach (CargoShipV2 localShip in m_localShips)
+        {
+            if (localShip != ship && localShip.DockedAt.ValueOrNull == terminal)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------ network dispatch
+
+    /// <summary>
+    /// The dispatcher: picks the most valuable terminal for the given ship to visit, or null.
+    /// Value of a visit = products the ship could deliver there (ship cargo × the terminal's
+    /// import modules' free capacity) plus products it could fetch (the terminal's export
+    /// modules' stock × the ship's free module capacity for that product). Only terminals with
+    /// a free, unreserved, accessible dock qualify; the chosen dock is reserved for the ship.
+    /// </summary>
+    public CargoDepot FindTradeTargetFor(CargoShipV2 ship)
+    {
+        pruneReservations(ship);
 
         // Min-load gate: the trip must move at least MIN_LOAD_PERCENT of the ship's capacity —
         // unless the target can absorb the ship's whole current cargo (never strand goods).
@@ -262,19 +392,9 @@ public class ShippingManager
         int bestValue = 0;
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
-            // Occupied = some ship is physically docked AT this terminal (the terminal's own
-            // ship may be docked elsewhere, which must not block its home dock).
-            bool dockOccupied = false;
-            foreach (CargoShipV2 localShip in m_localShips)
-            {
-                if (localShip != ship && localShip.DockedAt.ValueOrNull == terminal)
-                {
-                    dockOccupied = true;
-                    break;
-                }
-            }
             if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked
-                || ship.DockedAt.ValueOrNull == terminal || dockOccupied
+                || ship.DockedAt.ValueOrNull == terminal
+                || isDockOccupiedByOther(terminal, ship)
                 || m_inboundShips.ContainsKey(terminal))
             {
                 continue;
@@ -603,6 +723,9 @@ public class ShippingManager
         Dict<CargoDepotModule, int>.Serialize(m_moduleThresholds, writer);
         Dict<CargoDepot, int>.Serialize(m_lastServed, writer);
         writer.WriteInt(m_tickCounter);
+        Lyst<Lines.ShippingLine>.Serialize(m_lines, writer);
+        Dict<CargoShipV2, int>.Serialize(m_shipLines, writer);
+        writer.WriteInt(m_nextLineId);
     }
 
     public static ShippingManager Deserialize(BlobReader reader)
@@ -645,6 +768,13 @@ public class ShippingManager
         {
             m_tickCounter = reader.ReadInt();
         }
+        reader.SetField(this, "m_lines", (version >= 5)
+            ? Lyst<Lines.ShippingLine>.Deserialize(reader)
+            : new Lyst<Lines.ShippingLine>());
+        reader.SetField(this, "m_shipLines", (version >= 5)
+            ? Dict<CargoShipV2, int>.Deserialize(reader)
+            : new Dict<CargoShipV2, int>());
+        m_nextLineId = (version >= 5) ? reader.ReadInt() : 1;
         s_current = this;
     }
 
