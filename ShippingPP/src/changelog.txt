@@ -1,6 +1,10 @@
 Shipping++ — Changelog
 ================================
 
+v0.2.1
+------
+- Added this changelog to the mod package (no gameplay changes).
+
 v0.2.0
 ------
 Fleets — multiple ships per terminal:
