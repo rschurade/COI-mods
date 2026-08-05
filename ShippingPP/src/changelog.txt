@@ -1,6 +1,45 @@
 Shipping++ — Changelog
 ================================
 
+v0.2.0
+------
+Fleets — multiple ships per terminal:
+- The build-ship button can now be used repeatedly: build as many
+  ships as you like at each terminal. Extra ships arrive over the
+  ocean from the map edge and sail in; the terminal window shows how
+  many ships call it home. Freshly built ships are commissioned with
+  fuel from the terminal's fuel buffer.
+- Each dock serves one ship at a time: arriving ships queue up and
+  hold at anchor seaward of the dock, and when the berth frees up
+  exactly one ship — the head of the queue — moves in. Waiting ships
+  show "Waiting for a free berth" as their status.
+- A docked ship that has nothing left to do yields the berth to
+  waiting ships and rides at anchor instead of blocking the dock.
+- Ships plan their cargo per trip and account for what other ships
+  are already fetching or delivering, so a fleet no longer chases
+  the same goods to the same terminal.
+- A ship that cannot afford the fuel for its next leg makes a free
+  emergency run to its home dock to refuel (previously a dry ship
+  could end up stranded at sea forever).
+
+Balance:
+- Ship build cost changed from 600 Construction Parts III to
+  120 Vehicle Parts II + 100 Steel, matching the cargo depot's
+  CP2-era research tier.
+
+Navigation buoys:
+- Buoys are free to place and float at sea level (previously they
+  could sink under water at the ocean floor's depth).
+- New procedural buoy model (red/white lathe body with a topmark)
+  replacing the placeholder beacon, used for the placed buoy, the
+  build ghost and the toolbar icon.
+- Buoys can be renamed like other buildings.
+
 v0.1.0
 ------
-- Work in progress.
+Initial version: local cargo terminals (built on your own coast) with
+ships hauling products between them; offer/request terminal modules
+with network thresholds; automatic dispatch plus optional shipping
+lines with fixed stops (terminals and buoys) managed in the shipping
+lines window; ships built on site from delivered materials; vanilla-
+style fuel per journey.
