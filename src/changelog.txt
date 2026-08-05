@@ -1,6 +1,31 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.8
+------
+New building — Balancing pipe connector:
+- The pipe connector's compact 1x1 body with the full feature set of
+  the vanilla pipe balancer: per-port priorities, the "enforce
+  strictly even inputs/outputs" toggles and the same prioritization
+  management window — covering all six connections, including the
+  vertical (top/bottom) ones.
+- Can be placed directly onto an existing pipe and cuts itself in,
+  just like a regular connector — on straight runs, riser elbows and
+  even mid-riser. (The pipe is cut when the ghost is placed, so flow
+  pauses until construction finishes.)
+- Found right next to the pipe balancer in the toolbar, unlocked by
+  the same research. Costs, workers, maintenance and power are half
+  of the vanilla pipe balancer (rounded up).
+
+Fixes:
+- The loading animations of ELEVATED station modules now play fully:
+  the fluid module extends its loading pipe down into the tank wagon
+  and the loose module animates its chute. (The baked animation data
+  was looked up under a placeholder asset root for modded protos —
+  "Animation data not found" in the game log — leaving those parts
+  frozen in their rest pose; only Animator-driven parts like the pump
+  kept moving.)
+
 v0.9.7
 ------
 Elevated station fixes for game Update 4 (v0.8.6c):
