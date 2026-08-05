@@ -71,6 +71,16 @@ public sealed class ShippingPPMod : IMod
 
     public void Initialize(DependencyResolver resolver, bool gameWasLoaded)
     {
+        // Registers the procedural buoy model before any entity renders.
+        try
+        {
+            Lines.NavBuoyModel.TryInject(resolver);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to inject buoy model: {ex.Message}");
+        }
+
         // Keeps local terminals from taking a ship out of the vanilla shipwreck pool (their
         // ships are built on site instead).
         try
@@ -112,6 +122,16 @@ public sealed class ShippingPPMod : IMod
         catch (Exception ex)
         {
             Log.Error($"Shipping++: failed to apply module picker patch: {ex.Message}");
+        }
+
+        // Navigation buoys are placed at sea level instead of sinking to the ocean floor.
+        try
+        {
+            Lines.NavBuoyPlacementPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply buoy placement patch: {ex.Message}");
         }
     }
 

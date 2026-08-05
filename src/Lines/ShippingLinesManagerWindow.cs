@@ -246,8 +246,10 @@ public class ShippingLinesManagerWindow : Window
             }
         }
         sb.Append('|');
-        foreach (Mafi.Base.Prototypes.Buildings.BarrierEntity buoy in
-            m_entitiesManager.GetAllEntitiesOfType<Mafi.Base.Prototypes.Buildings.BarrierEntity>())
+        // StaticEntity + proto filter: buoys placed before the NavBuoy entity class existed
+        // are plain barrier entities, newer ones are NavBuoy — this covers both.
+        foreach (Mafi.Core.Entities.Static.StaticEntity buoy in
+            m_entitiesManager.GetAllEntitiesOfType<Mafi.Core.Entities.Static.StaticEntity>())
         {
             if (buoy.Prototype is NavBuoyProto && !buoy.IsDestroyed && buoy.IsConstructed)
             {
@@ -315,8 +317,8 @@ public class ShippingLinesManagerWindow : Window
                 options.Add(terminal.Id.Value);
             }
         }
-        foreach (Mafi.Base.Prototypes.Buildings.BarrierEntity buoy in
-            m_entitiesManager.GetAllEntitiesOfType<Mafi.Base.Prototypes.Buildings.BarrierEntity>())
+        foreach (Mafi.Core.Entities.Static.StaticEntity buoy in
+            m_entitiesManager.GetAllEntitiesOfType<Mafi.Core.Entities.Static.StaticEntity>())
         {
             if (buoy.Prototype is NavBuoyProto && !buoy.IsDestroyed && buoy.IsConstructed)
             {
