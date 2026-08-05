@@ -79,19 +79,23 @@ internal class LocalTerminalData : IModData
         proto.AddParam(new DrawArrowWileBuildingProtoParam(6f));
 
         // Materials to build the terminal's ship. The ship proto itself has an empty cost
-        // (vanilla cargo ships are salvaged, never built); the vanilla price of a ship is the
-        // ships settlement's trade: one cargo ship for 600 Construction parts III.
-        Mafi.Core.Products.ProductProto costProduct =
-            db.Get<Mafi.Core.Products.ProductProto>(Mafi.Base.Ids.Products.ConstructionParts3)
+        // (vanilla cargo ships are salvaged, never built). Priced like the vanilla vehicles
+        // (tiered vehicle parts + one material: Truck T2 = 30 VP2 + 30 Rubber, Excavator T2 =
+        // 60 VP2 + 30 Steel) at the terminal's own tech era — the cargo depot is a CP2-tier
+        // building, so no CP3 anywhere. Twice an Excavator T2, plus a steel hull.
+        Mafi.Core.Products.ProductProto vehicleParts =
+            db.Get<Mafi.Core.Products.ProductProto>(Mafi.Base.Ids.Products.VehicleParts2)
                 .ValueOrNull;
-        if (costProduct != null)
+        Mafi.Core.Products.ProductProto steel =
+            db.Get<Mafi.Core.Products.ProductProto>(Mafi.Base.Ids.Products.Steel).ValueOrNull;
+        if (vehicleParts != null && steel != null)
         {
-            ShippingManager.ShipBuildCost =
-                new Mafi.Core.Economy.AssetValue(costProduct.WithQuantity(600.Quantity()));
+            ShippingManager.ShipBuildCost = new Mafi.Core.Economy.AssetValue(
+                vehicleParts.WithQuantity(120.Quantity()), steel.WithQuantity(100.Quantity()));
         }
         else
         {
-            Log.Warning("Shipping++: ConstructionParts3 not found; ship build cost left empty.");
+            Log.Warning("Shipping++: VehicleParts2/Steel not found; ship build cost left empty.");
         }
 
         // The module product-picker patch needs the protos db to enumerate all products.

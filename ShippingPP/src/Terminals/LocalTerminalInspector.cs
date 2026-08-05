@@ -81,11 +81,19 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
 
         var constrUi = new ConstructionUi();
         PanelFooterRow constrUiPanel;
+        var fleetLabel = new Label().MarginTop(2.pt());
         AddPanelWithHeader(new Row(4.pt())
         {
+            fleetLabel,
             buildBtn
-        }).Title("Cargo ship".AsLoc(), ("The terminal's own ship, built on site from delivered "
-            + "materials. It serves this terminal only.").AsLoc());
+        }).Title("Cargo ships".AsLoc(), ("Ships built on site from delivered materials, homed "
+            + "at this terminal. Build as many as you like — arrivals queue up and hold at "
+            + "anchor while the dock serves one ship at a time.").AsLoc());
+        this.Observe(() => m_shippingManager.CountShipsHomedAt(Entity))
+            .Do(delegate(int count)
+            {
+                ((IComponentWithText)fleetLabel).SetValue($"Ships: {count}".AsLoc());
+            });
         AddPanel(delegate(Column c)
         {
             c.Gap(2.pt());
@@ -97,10 +105,9 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
         }, () => EntityValidationResult.Success);
 
         this.Observe(() => m_shippingManager.IsBuildingShip(Entity))
-            .Observe(() => Entity.CargoShip.HasValue)
-            .Do(delegate(bool isBuilding, bool hasShip)
+            .Do(delegate(bool isBuilding)
             {
-                buildBtn.Visible(!isBuilding && !hasShip);
+                buildBtn.Visible(!isBuilding);
             });
         this.Observe(() => m_shippingManager.TryGetShipBuildProgress(Entity))
             .DoOnSync(delegate(Option<ConstructionProgress> progress)

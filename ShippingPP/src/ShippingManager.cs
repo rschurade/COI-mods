@@ -39,7 +39,11 @@ namespace ShippingPP;
 public class ShippingManager
 {
     /// <summary>Version stamp of this manager's own save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 5;
+    private const int SAVE_VERSION = 7;
+
+    /// <summary>How many ships may wait (hold at anchor) for one dock, on top of the one being
+    /// served. Docks with a full queue are not offered to further ships.</summary>
+    private const int MAX_WAITING_PER_DOCK = 2;
 
     /// <summary>A trip must move at least this share of the ship's cargo capacity to be worth
     /// dispatching (the train network's "wait for a worthwhile load" rule). A ship whose whole
@@ -62,8 +66,19 @@ public class ShippingManager
 
     private readonly Dict<CargoDepot, ShipBuildState> m_builds;
     private readonly Set<CargoShipV2> m_localShips;
-    /// <summary>Which ship is currently heading for which terminal's dock (one inbound per dock).</summary>
-    private readonly Dict<CargoDepot, CargoShipV2> m_inboundShips;
+    /// <summary>Per-dock arrival queue: the head ship may dock (once the dock is physically
+    /// free), the rest hold at anchor outside the harbor. Entries are removed on arrival,
+    /// on retarget (<see cref="ReleaseDockClaim"/>) and when ships/terminals die.</summary>
+    private readonly Dict<CargoDepot, Lyst<CargoShipV2>> m_dockQueues;
+    /// <summary>What each dispatched ship intends to fetch/deliver at its target — subtracted
+    /// from other ships' dispatch evaluations so two ships never sail for the same cargo.</summary>
+    private readonly Dict<CargoShipV2, CargoPlan> m_cargoPlans;
+    /// <summary>The one ship per dock that currently holds the berth promise (granted but not
+    /// yet docked). While a grant is active every other ship is denied, no matter how the
+    /// queue shifts — without this, a grantee whose docking takes a few ticks (undocking
+    /// predecessor, navigation cooldown) loses the berth to the next ship in line and the
+    /// whole queue storms the dock at once.</summary>
+    private readonly Dict<CargoDepot, CargoShipV2> m_berthGrants;
     /// <summary>Terminal modules the player switched to export ("offer") mode; absent = import.</summary>
     private readonly Set<CargoDepotModule> m_exportModules;
     /// <summary>Per-module network threshold in percent (absent = 100 = always active). Vanilla
@@ -99,7 +114,9 @@ public class ShippingManager
     {
         m_builds = new Dict<CargoDepot, ShipBuildState>();
         m_localShips = new Set<CargoShipV2>();
-        m_inboundShips = new Dict<CargoDepot, CargoShipV2>();
+        m_dockQueues = new Dict<CargoDepot, Lyst<CargoShipV2>>();
+        m_cargoPlans = new Dict<CargoShipV2, CargoPlan>();
+        m_berthGrants = new Dict<CargoDepot, CargoShipV2>();
         m_exportModules = new Set<CargoDepotModule>();
         m_moduleThresholds = new Dict<CargoDepotModule, int>();
         m_lastServed = new Dict<CargoDepot, int>();
@@ -243,6 +260,20 @@ public class ShippingManager
         return s_current != null && s_current.m_localShips.Contains(ship);
     }
 
+    /// <summary>Number of live local ships homed at (built by) the given terminal.</summary>
+    public int CountShipsHomedAt(CargoDepot terminal)
+    {
+        int count = 0;
+        foreach (CargoShipV2 ship in m_localShips)
+        {
+            if (!ship.IsDestroyed && ship.AssignedDepot.ValueOrNull == terminal)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
     // ------------------------------------------------------------------ lines
 
     internal Lyst<Lines.ShippingLine> AllLines => m_lines;
@@ -311,40 +342,183 @@ public class ShippingManager
     }
 
     /// <summary>
-    /// Reserves the terminal's dock for the ship (one inbound ship per dock; physically occupied
-    /// docks refused). Shared by line ships and the network dispatcher.
+    /// Claims a place in the terminal's dock queue for the ship (joining it if there is room)
+    /// and returns true only when the ship is at the head of the queue AND the dock is
+    /// physically free — i.e. it may sail in and dock right now. Ships that get false but are
+    /// queued should hold at anchor (<see cref="GetQueueIndex"/> gives their position). Shared
+    /// by line ships and the network dispatcher.
     /// </summary>
     public bool TryReserveDock(CargoDepot terminal, CargoShipV2 ship)
     {
-        pruneReservations(ship);
-        if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked
-            || isDockOccupiedByOther(terminal, ship))
+        pruneQueues();
+        if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked)
         {
             return false;
         }
-        if (m_inboundShips.TryGetValue(terminal, out CargoShipV2 other) && other != ship)
+        // An active berth promise beats everything: the grantee keeps its claim (regardless of
+        // queue churn) until it has actually docked, and every other ship is denied for as
+        // long as the promise stands (stale promises are cleaned up by pruneQueues).
+        if (m_berthGrants.TryGetValue(terminal, out CargoShipV2 grantee))
         {
-            return false;
+            return grantee == ship && !isDockOccupiedByOther(terminal, ship);
         }
-        m_inboundShips[terminal] = ship;
-        return true;
+        Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
+        int index = indexIn(queue, ship);
+        if (index < 0)
+        {
+            if (queue != null && queue.Count > MAX_WAITING_PER_DOCK)
+            {
+                return false; // Queue full — cannot even wait here.
+            }
+            queue = queueFor(terminal, create: true);
+            queue.Add(ship);
+            index = queue.Count - 1;
+        }
+        bool granted = index == 0 && !isDockOccupiedByOther(terminal, ship);
+        if (granted)
+        {
+            m_berthGrants[terminal] = ship;
+        }
+        return granted;
     }
 
-    /// <summary>Releases this ship's stale reservations (and prunes globally stale ones).</summary>
-    private void pruneReservations(CargoShipV2 ship)
+    /// <summary>The ship's position in the terminal's dock queue (0 = next to dock), or -1.</summary>
+    public int GetQueueIndex(CargoDepot terminal, CargoShipV2 ship)
+    {
+        return indexIn(queueFor(terminal, create: false), ship);
+    }
+
+    /// <summary>Whether any OTHER ship is queued for this dock (used by docked ships to decide
+    /// to yield the berth instead of idling on it).</summary>
+    public bool DockHasWaiters(CargoDepot terminal, CargoShipV2 except = null)
+    {
+        pruneQueues();
+        Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
+        if (queue == null)
+        {
+            return false;
+        }
+        foreach (CargoShipV2 waiter in queue)
+        {
+            if (waiter != except)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Removes the ship from every dock queue and drops its cargo plan (call when it
+    /// retargets or gives up on a leg).</summary>
+    public void ReleaseDockClaim(CargoShipV2 ship)
+    {
+        foreach (KeyValuePair<CargoDepot, Lyst<CargoShipV2>> pair in m_dockQueues)
+        {
+            pair.Value.Remove(ship);
+        }
+        m_cargoPlans.Remove(ship);
+        m_toRemoveTmp.Clear();
+        foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_berthGrants)
+        {
+            if (pair.Value == ship)
+            {
+                m_toRemoveTmp.Add(pair.Key);
+            }
+        }
+        foreach (CargoDepot released in m_toRemoveTmp)
+        {
+            m_berthGrants.Remove(released);
+        }
+    }
+
+    private Lyst<CargoShipV2> queueFor(CargoDepot terminal, bool create)
+    {
+        if (!m_dockQueues.TryGetValue(terminal, out Lyst<CargoShipV2> queue) && create)
+        {
+            queue = new Lyst<CargoShipV2>();
+            m_dockQueues.Add(terminal, queue);
+        }
+        return queue;
+    }
+
+    private static int indexIn(Lyst<CargoShipV2> queue, CargoShipV2 ship)
+    {
+        if (queue == null)
+        {
+            return -1;
+        }
+        for (int i = 0; i < queue.Count; i++)
+        {
+            if (queue[i] == ship)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>Drops queue entries that arrived (ship docked at that terminal — also releasing
+    /// their cargo plan there), died, or stopped being local; drops queues of dead terminals.</summary>
+    private void pruneQueues()
     {
         m_toRemoveTmp.Clear();
-        foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_inboundShips)
+        foreach (KeyValuePair<CargoDepot, Lyst<CargoShipV2>> pair in m_dockQueues)
         {
-            if (pair.Value == ship || pair.Value.IsDestroyed || pair.Key.IsDestroyed
-                || pair.Value.DockedAt.HasValue)
+            Lyst<CargoShipV2> queue = pair.Value;
+            for (int i = queue.Count - 1; i >= 0; i--)
+            {
+                CargoShipV2 ship = queue[i];
+                bool arrived = !ship.IsDestroyed && ship.DockedAt.ValueOrNull == pair.Key;
+                if (arrived && m_cargoPlans.TryGetValue(ship, out CargoPlan plan)
+                    && plan.Terminal == pair.Key)
+                {
+                    m_cargoPlans.Remove(ship);
+                }
+                if (arrived || ship.IsDestroyed || !m_localShips.Contains(ship))
+                {
+                    queue.RemoveAt(i);
+                }
+            }
+            if (queue.Count == 0 || pair.Key.IsDestroyed)
             {
                 m_toRemoveTmp.Add(pair.Key);
             }
         }
         foreach (CargoDepot stale in m_toRemoveTmp)
         {
-            m_inboundShips.Remove(stale);
+            m_dockQueues.Remove(stale);
+        }
+        // Berth promises: fulfilled (grantee docked there), or void (grantee dead, foreign, or
+        // docked somewhere else after giving up).
+        m_toRemoveTmp.Clear();
+        foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_berthGrants)
+        {
+            CargoShipV2 grantee = pair.Value;
+            if (grantee.IsDestroyed || pair.Key.IsDestroyed || !m_localShips.Contains(grantee)
+                || grantee.DockedAt.HasValue)
+            {
+                m_toRemoveTmp.Add(pair.Key);
+            }
+        }
+        foreach (CargoDepot done in m_toRemoveTmp)
+        {
+            m_berthGrants.Remove(done);
+        }
+        // Plans of dead ships (retargets go through ReleaseDockClaim).
+        Lyst<CargoShipV2> deadPlans = null;
+        foreach (KeyValuePair<CargoShipV2, CargoPlan> pair in m_cargoPlans)
+        {
+            if (pair.Key.IsDestroyed || pair.Value.Terminal.IsDestroyed)
+            {
+                (deadPlans = deadPlans ?? new Lyst<CargoShipV2>()).Add(pair.Key);
+            }
+        }
+        if (deadPlans != null)
+        {
+            foreach (CargoShipV2 dead in deadPlans)
+            {
+                m_cargoPlans.Remove(dead);
+            }
         }
     }
 
@@ -366,12 +540,14 @@ public class ShippingManager
     /// The dispatcher: picks the most valuable terminal for the given ship to visit, or null.
     /// Value of a visit = products the ship could deliver there (ship cargo × the terminal's
     /// import modules' free capacity) plus products it could fetch (the terminal's export
-    /// modules' stock × the ship's free module capacity for that product). Only terminals with
-    /// a free, unreserved, accessible dock qualify; the chosen dock is reserved for the ship.
+    /// modules' stock × the ship's free module capacity for that product) — both reduced by
+    /// what OTHER dispatched ships already plan to fetch/deliver there, so cargo is never
+    /// promised twice. Terminals qualify while their dock queue has room; the ship joins the
+    /// chosen dock's queue and its planned quantities are recorded as its cargo plan.
     /// </summary>
     public CargoDepot FindTradeTargetFor(CargoShipV2 ship)
     {
-        pruneReservations(ship);
+        pruneQueues();
 
         // Min-load gate: the trip must move at least MIN_LOAD_PERCENT of the ship's capacity —
         // unless the target can absorb the ship's whole current cargo (never strand goods).
@@ -389,19 +565,24 @@ public class ShippingManager
         int minTripValue = shipCapacityTotal.Value * MIN_LOAD_PERCENT / 100;
 
         var candidates = new Lyst<KeyValuePair<CargoDepot, int>>();
+        var candidatePlans = new Dict<CargoDepot, CargoPlan>();
         int bestValue = 0;
         foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
         {
             if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked
-                || ship.DockedAt.ValueOrNull == terminal
-                || isDockOccupiedByOther(terminal, ship)
-                || m_inboundShips.ContainsKey(terminal))
+                || ship.DockedAt.ValueOrNull == terminal)
             {
                 continue;
+            }
+            Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
+            if (queue != null && indexIn(queue, ship) < 0 && queue.Count > MAX_WAITING_PER_DOCK)
+            {
+                continue; // Dock queue full.
             }
 
             int value = 0;
             Quantity deliverable = Quantity.Zero;
+            var plan = new CargoPlan(terminal);
             foreach (Option<CargoDepotModule> slot in terminal.Modules)
             {
                 CargoDepotModule module = slot.ValueOrNull;
@@ -419,7 +600,14 @@ public class ShippingManager
                     // The terminal offers: worth fetching, while filled above (100 - threshold).
                     if (fillPercent > 100 - threshold)
                     {
-                        value += shipFreeCapacityFor(ship, product).Min(moduleStock(module)).Value;
+                        Quantity stock = moduleStock(module)
+                            - plannedByOthers(ship, terminal, product, fetch: true);
+                        Quantity q = shipFreeCapacityFor(ship, product).Min(stock);
+                        if (q.IsPositive)
+                        {
+                            value += q.Value;
+                            plan.AddFetch(product, q);
+                        }
                     }
                 }
                 else
@@ -427,9 +615,15 @@ public class ShippingManager
                     // The terminal requests: worth delivering, while filled below the threshold.
                     if (fillPercent < threshold)
                     {
-                        Quantity d = shipQuantityOf(ship, product).Min(module.UsableCapacity);
-                        value += d.Value;
-                        deliverable += d;
+                        Quantity room = module.UsableCapacity
+                            - plannedByOthers(ship, terminal, product, fetch: false);
+                        Quantity d = shipQuantityOf(ship, product).Min(room);
+                        if (d.IsPositive)
+                        {
+                            value += d.Value;
+                            deliverable += d;
+                            plan.AddDeliver(product, d);
+                        }
                     }
                 }
             }
@@ -443,6 +637,7 @@ public class ShippingManager
                 continue;
             }
             candidates.Add(new KeyValuePair<CargoDepot, int>(terminal, value));
+            candidatePlans[terminal] = plan;
             bestValue = bestValue.Max(value);
         }
 
@@ -467,9 +662,31 @@ public class ShippingManager
         if (best != null)
         {
             m_lastServed[best] = m_tickCounter;
-            m_inboundShips[best] = ship;
+            // The caller joins the dock queue via TryReserveDock; the dispatcher itself never
+            // touches queues (releasing/rejoining here would churn the queue order).
+            m_cargoPlans[ship] = candidatePlans[best];
+        }
+        else
+        {
+            m_cargoPlans.Remove(ship);
         }
         return best;
+    }
+
+    /// <summary>Sum other dispatched ships already plan to fetch from (or deliver to) the
+    /// terminal for this product.</summary>
+    private Quantity plannedByOthers(CargoShipV2 ship, CargoDepot terminal, ProductProto product,
+        bool fetch)
+    {
+        Quantity total = Quantity.Zero;
+        foreach (KeyValuePair<CargoShipV2, CargoPlan> pair in m_cargoPlans)
+        {
+            if (pair.Key != ship && pair.Value.Terminal == terminal)
+            {
+                total += fetch ? pair.Value.FetchOf(product) : pair.Value.DeliverOf(product);
+            }
+        }
+        return total;
     }
 
     private static Quantity moduleStock(CargoDepotModule module)
@@ -542,10 +759,6 @@ public class ShippingManager
         if (terminal.IsDestroyed || !terminal.IsConstructed)
         {
             return "The terminal is not fully constructed.";
-        }
-        if (terminal.CargoShip.HasValue)
-        {
-            return "The terminal already has a ship.";
         }
         if (m_builds.ContainsKey(terminal))
         {
@@ -637,17 +850,40 @@ public class ShippingManager
         createShipDockedAt(state.Terminal);
     }
 
-    /// <summary>Creates the terminal's ship, already docked, and tracks it as a local ship.</summary>
+    /// <summary>
+    /// Creates a ship homed at the terminal and tracks it as a local ship. The first ship
+    /// spawns docked and takes the vanilla depot's ship slot (which also sizes the fuel
+    /// buffer); further ships spawn on the water at the dock approach — their job provider
+    /// then queues them for a berth like any other arrival.
+    /// </summary>
     private void createShipDockedAt(CargoDepot terminal)
     {
         CargoShipProto shipProto = ((CargoDepotProto)terminal.Prototype).CargoShipProto;
         Option<ProductProto> fuel = shipProto.AvailableFuels.First.FuelProto.SomeOption();
+        bool dockFree = DockedLocalShipAt(terminal) == null;
         CargoShipV2 ship = m_cargoShipFactory.AddCargoShip(terminal, shipProto, fuel,
-            skipSpawn: true);
-        ship.SpawnAtDock(terminal);
-        terminal.ReplaceShipAndDestroyCurrent(ship);
+            skipSpawn: dockFree);
+        if (dockFree)
+        {
+            ship.SpawnAtDock(terminal);
+        }
+        if (terminal.CargoShip.IsNone)
+        {
+            terminal.ReplaceShipAndDestroyCurrent(ship);
+        }
+        // Commissioning fuel from the terminal's own fuel buffer, as far as it stretches —
+        // a ship that spawns away from the dock cannot refuel until it docks, but needs leg
+        // fuel to take its first job.
+        object buffer = ProtoUtils.GetField(typeof(CargoDepot), terminal, "m_fuelBuffer");
+        if (buffer is Mafi.Core.Buildings.Storages.LogisticsBuffer fuelBuffer
+            && fuelBuffer.Quantity.IsPositive)
+        {
+            Quantity taken = fuelBuffer.Quantity - ship.StoreFuelAsMuchAs(fuelBuffer.Quantity);
+            fuelBuffer.RemoveExactly(taken);
+        }
         m_localShips.Add(ship);
-        Log.Info($"Shipping++: ship {ship.Id} built and docked at terminal {terminal.Id}.");
+        Log.Info($"Shipping++: ship {ship.Id} built at terminal {terminal.Id} "
+            + $"({(dockFree ? "docked" : "waiting off the dock")}).");
     }
 
     /// <summary>Aborts a build; any already-delivered materials are lost (reported destroyed).</summary>
@@ -718,7 +954,12 @@ public class ShippingManager
         writer.WriteGeneric(m_cargoShipFactory);
         writer.WriteGeneric(m_instaBuildManager);
         BuildBufferPriorityProvider.Serialize(m_priorityProvider, writer);
-        Dict<CargoDepot, CargoShipV2>.Serialize(m_inboundShips, writer);
+        writer.WriteInt(m_dockQueues.Count);
+        foreach (KeyValuePair<CargoDepot, Lyst<CargoShipV2>> pair in m_dockQueues)
+        {
+            CargoDepot.Serialize(pair.Key, writer);
+            Lyst<CargoShipV2>.Serialize(pair.Value, writer);
+        }
         Set<CargoDepotModule>.Serialize(m_exportModules, writer);
         Dict<CargoDepotModule, int>.Serialize(m_moduleThresholds, writer);
         Dict<CargoDepot, int>.Serialize(m_lastServed, writer);
@@ -726,6 +967,18 @@ public class ShippingManager
         Lyst<Lines.ShippingLine>.Serialize(m_lines, writer);
         Dict<CargoShipV2, int>.Serialize(m_shipLines, writer);
         writer.WriteInt(m_nextLineId);
+        writer.WriteInt(m_cargoPlans.Count);
+        foreach (KeyValuePair<CargoShipV2, CargoPlan> pair in m_cargoPlans)
+        {
+            CargoShipV2.Serialize(pair.Key, writer);
+            CargoPlan.Serialize(pair.Value, writer);
+        }
+        writer.WriteInt(m_berthGrants.Count);
+        foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_berthGrants)
+        {
+            CargoDepot.Serialize(pair.Key, writer);
+            CargoShipV2.Serialize(pair.Value, writer);
+        }
     }
 
     public static ShippingManager Deserialize(BlobReader reader)
@@ -752,9 +1005,26 @@ public class ShippingManager
         reader.SetField(this, "m_cargoShipFactory", reader.ReadGenericAs<ICargoShipFactory>());
         reader.SetField(this, "m_instaBuildManager", reader.ReadGenericAs<IInstaBuildManager>());
         reader.SetField(this, "m_priorityProvider", BuildBufferPriorityProvider.Deserialize(reader));
-        reader.SetField(this, "m_inboundShips", (version >= 2)
-            ? Dict<CargoDepot, CargoShipV2>.Deserialize(reader)
-            : new Dict<CargoDepot, CargoShipV2>());
+        var dockQueues = new Dict<CargoDepot, Lyst<CargoShipV2>>();
+        if (version >= 6)
+        {
+            int queueCount = reader.ReadInt();
+            for (int i = 0; i < queueCount; i++)
+            {
+                CargoDepot terminal = CargoDepot.Deserialize(reader);
+                dockQueues[terminal] = Lyst<CargoShipV2>.Deserialize(reader);
+            }
+        }
+        else if (version >= 2)
+        {
+            // v2..5 stored a single inbound ship per dock; it becomes a one-entry queue.
+            foreach (KeyValuePair<CargoDepot, CargoShipV2> pair
+                in Dict<CargoDepot, CargoShipV2>.Deserialize(reader))
+            {
+                dockQueues[pair.Key] = new Lyst<CargoShipV2> { pair.Value };
+            }
+        }
+        reader.SetField(this, "m_dockQueues", dockQueues);
         reader.SetField(this, "m_exportModules", (version >= 3)
             ? Set<CargoDepotModule>.Deserialize(reader)
             : new Set<CargoDepotModule>());
@@ -775,7 +1045,140 @@ public class ShippingManager
             ? Dict<CargoShipV2, int>.Deserialize(reader)
             : new Dict<CargoShipV2, int>());
         m_nextLineId = (version >= 5) ? reader.ReadInt() : 1;
+        var cargoPlans = new Dict<CargoShipV2, CargoPlan>();
+        if (version >= 6)
+        {
+            int planCount = reader.ReadInt();
+            for (int i = 0; i < planCount; i++)
+            {
+                CargoShipV2 ship = CargoShipV2.Deserialize(reader);
+                cargoPlans[ship] = CargoPlan.Deserialize(reader);
+            }
+        }
+        reader.SetField(this, "m_cargoPlans", cargoPlans);
+        var berthGrants = new Dict<CargoDepot, CargoShipV2>();
+        if (version >= 7)
+        {
+            int grantCount = reader.ReadInt();
+            for (int i = 0; i < grantCount; i++)
+            {
+                CargoDepot terminal = CargoDepot.Deserialize(reader);
+                berthGrants[terminal] = CargoShipV2.Deserialize(reader);
+            }
+        }
+        reader.SetField(this, "m_berthGrants", berthGrants);
         s_current = this;
+    }
+
+    /// <summary>A dispatched ship's intended exchange at its target terminal.</summary>
+    internal sealed class CargoPlan
+    {
+        public CargoDepot Terminal { get; private set; }
+        private Lyst<KeyValuePair<ProductProto, Quantity>> m_fetch;
+        private Lyst<KeyValuePair<ProductProto, Quantity>> m_deliver;
+
+        private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+            (obj, writer) => ((CargoPlan)obj).SerializeData(writer);
+        private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+            (obj, reader) => ((CargoPlan)obj).DeserializeData(reader);
+
+        public CargoPlan(CargoDepot terminal)
+        {
+            Terminal = terminal;
+            m_fetch = new Lyst<KeyValuePair<ProductProto, Quantity>>();
+            m_deliver = new Lyst<KeyValuePair<ProductProto, Quantity>>();
+        }
+
+        public void AddFetch(ProductProto product, Quantity quantity)
+        {
+            m_fetch.Add(new KeyValuePair<ProductProto, Quantity>(product, quantity));
+        }
+
+        public void AddDeliver(ProductProto product, Quantity quantity)
+        {
+            m_deliver.Add(new KeyValuePair<ProductProto, Quantity>(product, quantity));
+        }
+
+        public Quantity FetchOf(ProductProto product)
+        {
+            return sumOf(m_fetch, product);
+        }
+
+        public Quantity DeliverOf(ProductProto product)
+        {
+            return sumOf(m_deliver, product);
+        }
+
+        private static Quantity sumOf(Lyst<KeyValuePair<ProductProto, Quantity>> list,
+            ProductProto product)
+        {
+            Quantity total = Quantity.Zero;
+            foreach (KeyValuePair<ProductProto, Quantity> pair in list)
+            {
+                if (pair.Key == product)
+                {
+                    total += pair.Value;
+                }
+            }
+            return total;
+        }
+
+        public static void Serialize(CargoPlan value, BlobWriter writer)
+        {
+            if (writer.TryStartClassSerialization(value))
+            {
+                writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+            }
+        }
+
+        private void SerializeData(BlobWriter writer)
+        {
+            CargoDepot.Serialize(Terminal, writer);
+            writeList(writer, m_fetch);
+            writeList(writer, m_deliver);
+        }
+
+        private static void writeList(BlobWriter writer,
+            Lyst<KeyValuePair<ProductProto, Quantity>> list)
+        {
+            writer.WriteInt(list.Count);
+            foreach (KeyValuePair<ProductProto, Quantity> pair in list)
+            {
+                writer.WriteGeneric(pair.Key);
+                writer.WriteInt(pair.Value.Value);
+            }
+        }
+
+        public static CargoPlan Deserialize(BlobReader reader)
+        {
+            if (reader.TryStartClassDeserialization(out CargoPlan obj,
+                (Func<BlobReader, Type, CargoPlan>)null,
+                (Func<BlobReader, string, CargoPlan>)null, nullObjIsOk: false))
+            {
+                reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+            }
+            return obj;
+        }
+
+        private void DeserializeData(BlobReader reader)
+        {
+            Terminal = CargoDepot.Deserialize(reader);
+            m_fetch = readList(reader);
+            m_deliver = readList(reader);
+        }
+
+        private static Lyst<KeyValuePair<ProductProto, Quantity>> readList(BlobReader reader)
+        {
+            var list = new Lyst<KeyValuePair<ProductProto, Quantity>>();
+            int count = reader.ReadInt();
+            for (int i = 0; i < count; i++)
+            {
+                var product = reader.ReadGenericAs<ProductProto>();
+                var quantity = new Quantity(reader.ReadInt());
+                list.Add(new KeyValuePair<ProductProto, Quantity>(product, quantity));
+            }
+            return list;
+        }
     }
 
     /// <summary>State of one terminal's ship construction site.</summary>
