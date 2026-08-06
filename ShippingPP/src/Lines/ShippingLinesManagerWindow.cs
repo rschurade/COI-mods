@@ -3,9 +3,12 @@ using Mafi;
 using Mafi.Collections;
 using Mafi.Core;
 using Mafi.Core.Buildings.Cargo;
+using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
 using Mafi.Core.Entities;
 using Mafi.Core.Input;
+using Mafi.Core.Products;
+using Mafi.Core.Prototypes;
 using Mafi.Core.Syncers;
 using Mafi.Core.Trains;
 using Mafi.Localization;
@@ -68,6 +71,11 @@ public class ShippingLinesManagerWindow : Window
     private readonly Panel m_noLinesPanel;
 
     private int m_selectedLineId = -1;
+
+    /// <summary>In-place refreshers for the stop rows' module fill labels — repopulated with
+    /// every row rebuild, run by the fill observer so cargo transfers do NOT rebuild the rows
+    /// (a rebuild would interrupt drag-reordering).</summary>
+    private readonly Lyst<Action> m_fillUpdaters = new Lyst<Action>();
 
     public ShippingLinesManagerWindow(Controller controller, UiContext context,
         ShippingManager manager, EntitiesManager entitiesManager,
@@ -331,6 +339,15 @@ public class ShippingLinesManagerWindow : Window
         {
             rebuildAll();
         });
+        // Module fill rates change with every crane load; they update the existing labels in
+        // place instead of triggering the (drag-interrupting) full rebuild above.
+        this.Observe(computeFillHash).Do(delegate(string _)
+        {
+            foreach (Action updater in m_fillUpdaters)
+            {
+                updater();
+            }
+        });
     }
 
     private void createNewLine()
@@ -391,7 +408,16 @@ public class ShippingLinesManagerWindow : Window
         {
             if (!terminal.IsDestroyed && terminal.IsConstructed)
             {
-                sb.Append(terminal.Id.Value).Append(':').Append(terminal.GetTitle()).Append(';');
+                sb.Append(terminal.Id.Value).Append(':').Append(terminal.GetTitle()).Append(':');
+                // Module products included so the stop rows' module strips rebuild when a
+                // module is added/removed or its product changes (fill rates deliberately
+                // excluded — they update in place, see computeFillHash).
+                for (int i = 0; i < terminal.Modules.Length; i++)
+                {
+                    sb.Append(terminal.Modules[i].ValueOrNull?.StoredProduct.ValueOrNull
+                        ?.Id.Value ?? "").Append(',');
+                }
+                sb.Append(';');
             }
         }
         sb.Append('|');
@@ -403,6 +429,30 @@ public class ShippingLinesManagerWindow : Window
             if (buoy.Prototype is NavBuoyProto && !buoy.IsDestroyed && buoy.IsConstructed)
             {
                 sb.Append(buoy.Id.Value).Append(':').Append(buoy.GetTitle()).Append(';');
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Cheap per-sync signature of all terminal module fills (and directions) — a
+    /// change runs the in-place fill-label updaters without rebuilding any rows.</summary>
+    private string computeFillHash()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
+        {
+            if (terminal.IsDestroyed)
+            {
+                continue;
+            }
+            for (int i = 0; i < terminal.Modules.Length; i++)
+            {
+                CargoDepotModule module = terminal.Modules[i].ValueOrNull;
+                if (module != null)
+                {
+                    sb.Append(module.CurrentQuantity.Value)
+                        .Append(m_manager.IsExportModule(module) ? 'e' : 'i');
+                }
             }
         }
         return sb.ToString();
@@ -494,6 +544,7 @@ public class ShippingLinesManagerWindow : Window
         // bordered panel with the stop title and focus/remove buttons, and a drag-handle strip
         // (drag to reorder, using the vanilla Reorderable manipulator).
         m_stopsColumn.Clear();
+        m_fillUpdaters.Clear();
         m_noStopsLabel.Visible(selected.StopCount == 0);
         m_lineDiagram.Visible(selected.StopCount > 0);
         m_lineDiagram.Colors(selected.Color.Primary, selected.Color.Secondary);
@@ -530,6 +581,25 @@ public class ShippingLinesManagerWindow : Window
                 .Colors(selected.Color.Primary, selected.Color.Secondary)
                 .Number(i + 1);
             var dragHandle = new Column().Class(Cls.dragHandle).AlignSelfStretch();
+            // Terminal stops get a strip of their module product icons with live fill rates
+            // under the title; buoys (and destroyed stops) show just the title.
+            UiComponent stopInfo = new Label(titleOfStop(stop).AsLoc()).FontBold();
+            if (stop is CargoDepot depotStop && !depotStop.IsDestroyed)
+            {
+                UiComponent strip = buildModuleStrip(depotStop);
+                if (strip != null)
+                {
+                    stopInfo = new Column(1.pt())
+                    {
+                        (Action<Column>)delegate(Column c)
+                        {
+                            c.AlignItemsStart();
+                        },
+                        stopInfo,
+                        strip
+                    };
+                }
+            }
             var row = new Row
             {
                 (Action<Row>)delegate(Row c)
@@ -562,7 +632,7 @@ public class ShippingLinesManagerWindow : Window
                                 .AlignItemsCenter().MinHeight(44.px())
                                 .Padding(6, left: 2.pt(), right: 2.pt());
                         },
-                        new Label(titleOfStop(stop).AsLoc()).FontBold(),
+                        stopInfo,
                         new Row(1.pt())
                         {
                             focusBtn.FillRow(),
@@ -655,6 +725,67 @@ public class ShippingLinesManagerWindow : Window
                 });
             }
         }
+
+        // Freshly built fill labels start populated (the fill observer only fires on change).
+        foreach (Action updater in m_fillUpdaters)
+        {
+            updater();
+        }
+    }
+
+    /// <summary>
+    /// A row of the terminal's module product icons, each with a live fill-rate label (updated
+    /// in place via <see cref="m_fillUpdaters"/>) and a tooltip with the exact quantities and
+    /// the module's shipping direction. Null when the terminal has no modules with a product.
+    /// </summary>
+    private UiComponent buildModuleStrip(CargoDepot depot)
+    {
+        Row strip = null;
+        for (int i = 0; i < depot.Modules.Length; i++)
+        {
+            CargoDepotModule module = depot.Modules[i].ValueOrNull;
+            ProductProto product = module?.StoredProduct.ValueOrNull;
+            if (module == null || product == null)
+            {
+                continue;
+            }
+            CargoDepotModule capturedModule = module;
+            var icon = new Icon().Size(16.px(), Px.Auto);
+            icon.Value(((IProtoWithIcon)product).SomeOption());
+            var fillLabel = new Label().Color(Theme.InactiveColor);
+            var cell = new Row(1.pt())
+            {
+                (Action<Row>)delegate(Row c)
+                {
+                    c.AlignItemsCenter();
+                },
+                icon,
+                fillLabel
+            };
+            string productName = product.Strings.Name.TranslatedString;
+            m_fillUpdaters.Add(delegate
+            {
+                if (capturedModule.IsDestroyed)
+                {
+                    return;
+                }
+                int pct = capturedModule.Capacity.IsPositive
+                    ? capturedModule.CurrentQuantity.Value * 100 / capturedModule.Capacity.Value
+                    : 0;
+                ((IComponentWithText)fillLabel).SetValue($"{pct}%".AsLoc());
+                cell.Tooltip(($"{productName}: {capturedModule.CurrentQuantity.Value} / "
+                    + $"{capturedModule.Capacity.Value} stored — this module "
+                    + (m_manager.IsExportModule(capturedModule)
+                        ? "offers (export)." : "requests (import).")).AsLoc());
+            });
+            if (strip == null)
+            {
+                strip = new Row(2.pt());
+                strip.AlignItemsCenter();
+            }
+            strip.Add(cell);
+        }
+        return strip;
     }
 
     /// <summary>

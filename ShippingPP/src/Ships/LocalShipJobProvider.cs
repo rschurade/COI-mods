@@ -106,14 +106,20 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
+        // A line-assigned ship whose line has no usable route does NOT fall back to network
+        // dispatch — the assignment is explicit player intent, so it finishes its current leg
+        // and then idles (with a warning status) until the line gets two terminal stops or the
+        // ship is unassigned.
         Lines.ShippingLine line = null;
+        bool lineUnusable = false;
         int? lineId = manager.GetLineIdFor(m_ship);
         if (lineId.HasValue)
         {
             line = manager.TryGetLine(lineId.Value);
-            if (line != null && !line.HasUsableStops)
+            if (line == null || !line.HasUsableStops)
             {
                 line = null;
+                lineUnusable = true;
             }
         }
 
@@ -174,7 +180,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
                 || manager.GetQueueIndex(home, m_ship) >= 0;
             if (!needsBerth)
             {
-                CargoDepot job = manager.FindTradeTargetFor(m_ship);
+                CargoDepot job = lineUnusable ? null : manager.FindTradeTargetFor(m_ship);
                 if (job != null)
                 {
                     if (!tryConsumeLegFuel())
@@ -278,8 +284,9 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
-        // At home (or home is gone): ask the dispatcher for the next worthwhile trip.
-        CargoDepot next = manager.FindTradeTargetFor(m_ship);
+        // At home (or home is gone): ask the dispatcher for the next worthwhile trip. A ship
+        // whose assigned line is unusable stays put (yielding the berth below if needed).
+        CargoDepot next = lineUnusable ? null : manager.FindTradeTargetFor(m_ship);
         if (next != null)
         {
             if (!tryConsumeLegFuel())
@@ -610,7 +617,14 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         int? lineId = ShippingManager.Current?.GetLineIdFor(m_ship);
         if (lineId.HasValue)
         {
-            return $"On line {lineId.Value}".AsLoc();
+            Lines.ShippingLine line = ShippingManager.Current?.TryGetLine(lineId.Value);
+            if (line == null || !line.HasUsableStops)
+            {
+                state = StateForUi.Warning;
+                return ("Assigned line has no usable route — add at least two terminal stops "
+                    + "to the line, or unassign the ship to resume automatic dispatch.").AsLoc();
+            }
+            return $"On line \"{line.Name}\"".AsLoc();
         }
         return "Serving local terminals".AsLoc();
     }

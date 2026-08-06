@@ -486,9 +486,15 @@ public class ShippingManager
         if (lineId.HasValue && TryGetLine(lineId.Value) != null)
         {
             m_shipLines[ship] = lineId.Value;
+            Log.Info($"Shipping++: ship {ship.Id} assigned to line {lineId.Value}.");
         }
         else
         {
+            if (lineId.HasValue)
+            {
+                Log.Warning($"Shipping++: ship {ship.Id} assignment to unknown line "
+                    + $"{lineId.Value} ignored; ship unassigned.");
+            }
             m_shipLines.Remove(ship);
         }
     }

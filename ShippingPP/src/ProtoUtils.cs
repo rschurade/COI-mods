@@ -15,15 +15,15 @@ internal static class ProtoUtils
 {
     /// <summary>
     /// Adds the proto. If a research node is given, the proto is locked on init and unlocked by
-    /// that node (hidden in the research UI to avoid duplicate icons). With no node it is left
-    /// unlocked so it never becomes permanently unbuildable.
+    /// that node, shown in the research UI next to the vanilla donor so players can discover it.
+    /// With no node it is left unlocked so it never becomes permanently unbuildable.
     /// </summary>
     internal static Proto AddGated(ProtosDb db, Proto proto, ResearchNodeProto unlockedBy)
     {
         Proto added = db.Add(proto, lockOnInit: unlockedBy != null);
         if (unlockedBy != null)
         {
-            unlockedBy.AddProtoToUnlock((IProtoWithIcon)added, hideInUi: true);
+            unlockedBy.AddProtoToUnlock((IProtoWithIcon)added, hideInUi: false);
             Log.Info($"Shipping++: '{proto.Id}' unlocks with research '{unlockedBy.Id}'.");
         }
         else
