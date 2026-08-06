@@ -1,6 +1,15 @@
 Shipping++ — Changelog
 ================================
 
+v0.4.2
+------
+- Fixed a save-loading error ("Entity 'LocalTerminal' has two different
+  instances with the same ID: 0") when a save contains two or more
+  local terminals. Dock queues, berth assignments and cargo plans could
+  get mixed up between terminals right after loading; they now restore
+  correctly. Existing saves are unaffected beyond the fix — the save
+  format is unchanged.
+
 v0.4.1
 ------
 Mod compatibility:
