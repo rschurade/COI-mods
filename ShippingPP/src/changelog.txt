@@ -1,6 +1,48 @@
 Shipping++ — Changelog
 ================================
 
+v0.4.0
+------
+Home ports:
+- The ship window now shows a local ship's home terminal, and you can
+  give the ship a new home by clicking another terminal on the map.
+  Note that cargo in ship modules the new home does not have is lost.
+- Ships whose home terminal was demolished are no longer stuck: they
+  raise a "Cargo ship has no home port" warning, release any berth they
+  were blocking, and go back into service the moment you give them a
+  new home port.
+- Local ships no longer sit in the vanilla depot's ship slot, so
+  demolishing a terminal never destroys a ship with it.
+
+Fuel:
+- Local ships can be refitted to another fuel type from the ship
+  window, the same way vanilla cargo ships are. Previously the refit
+  was charged but never took effect, because it only completes for
+  ships out at the world map. It now completes as soon as the ship is
+  idle.
+- A terminal's fuel buffer follows its own fleet: when a refitted ship
+  docks at its home terminal, the buffer switches to the new fuel and
+  the old stock goes back to your assets. Newly built ships are
+  commissioned with the fuel their terminal handles.
+
+Lines and terminals:
+- A ship assigned to a line no longer falls back to automatic dispatch
+  when the line has no usable route. It waits and says so ("Assigned
+  line has no usable route"), instead of quietly sailing network trips
+  while claiming to be on the line.
+- Stop rows in the lines manager show each terminal module's product
+  with a live fill percentage, with quantities and the module's
+  shipping direction in the tooltip.
+- Local terminals and navigation buoys now show up in the research
+  tree, next to the cargo depots that unlock them.
+
+Translations:
+- All of the mod's texts can now be translated. Drop a translation
+  file into the mod's Translations folder and it is used for the
+  language you play in; see the readme in that folder. Texts the game
+  itself already provides are taken from the game, so they are already
+  translated everywhere.
+
 v0.3.0
 ------
 Terminal tiers — bigger docks, bigger ships:
