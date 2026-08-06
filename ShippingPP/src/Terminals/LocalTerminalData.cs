@@ -78,6 +78,16 @@ internal class LocalTerminalData : IModData
 
         // The module product-picker patch needs the protos db to enumerate all products.
         ModulePickerPatch.ProtosDb = db;
+
+        // The "ship has no home port" warning, raised for ships whose home terminal was
+        // destroyed (they can't take jobs or refuel until re-homed via the ship window).
+        new Mafi.Core.Notifications.NotificationProtoBuilder(registrator)
+            .Start("Cargo ship has no home port", ShippingManager.ShipHasNoHomeNotifId)
+            .SetType(Mafi.Core.Notifications.NotificationType.Continuous)
+            .SetStyle(Mafi.Core.Notifications.NotificationStyle.Critical)
+            .AddIcon("Assets/Unity/UserInterface/Toolbar/CargoShip.svg")
+            .AddEntityIcon("Assets/Unity/UserInterface/EntityIcons/Blocked.png")
+            .BuildAndAdd();
     }
 
     private static LocalTerminalProto registerTier(ProtosDb db, CargoDepotProto donor, int tier)

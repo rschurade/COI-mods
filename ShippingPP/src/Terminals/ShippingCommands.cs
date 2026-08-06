@@ -167,6 +167,58 @@ public class SetModuleThresholdCmd : InputCommand
     }
 }
 
+/// <summary>Re-homes a local ship to another terminal (the ship window's home-port picker).</summary>
+public class SetShipHomeCmd : InputCommand
+{
+    public readonly EntityId ShipId;
+
+    public readonly EntityId TerminalId;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetShipHomeCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetShipHomeCmd)obj).DeserializeData(reader);
+
+    public SetShipHomeCmd(EntityId shipId, EntityId terminalId)
+    {
+        ShipId = shipId;
+        TerminalId = terminalId;
+    }
+
+    public static void Serialize(SetShipHomeCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(ShipId, writer);
+        EntityId.Serialize(TerminalId, writer);
+    }
+
+    public new static SetShipHomeCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetShipHomeCmd obj,
+            (Func<BlobReader, Type, SetShipHomeCmd>)null,
+            (Func<BlobReader, string, SetShipHomeCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "ShipId", EntityId.Deserialize(reader));
+        reader.SetField(this, "TerminalId", EntityId.Deserialize(reader));
+    }
+}
+
 /// <summary>Edits shipping lines: create/delete lines, add/remove stops, (un)assign ships.</summary>
 public class ModifyLineCmd : InputCommand
 {
@@ -260,6 +312,7 @@ internal class ShippingCommandsProcessor
     : ICommandProcessor<SetShipConstructionCmd>, IAction<SetShipConstructionCmd>,
       ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>,
       ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>,
+      ICommandProcessor<SetShipHomeCmd>, IAction<SetShipHomeCmd>,
       ICommandProcessor<ModifyLineCmd>, IAction<ModifyLineCmd>
 {
     private readonly EntitiesManager m_entitiesManager;
@@ -318,6 +371,24 @@ internal class ShippingCommandsProcessor
             return;
         }
         m_shippingManager.SetModuleThreshold(module, cmd.Percent);
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SetShipHomeCmd>.Invoke(SetShipHomeCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.ShipId,
+            out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 ship)
+            || !m_entitiesManager.TryGetEntity(cmd.TerminalId, out LocalTerminal terminal))
+        {
+            cmd.SetResultError("Ship or terminal not found.");
+            return;
+        }
+        string error = m_shippingManager.SetShipHome(ship, terminal);
+        if (error != null)
+        {
+            cmd.SetResultError(error);
+            return;
+        }
         cmd.SetResultSuccess();
     }
 

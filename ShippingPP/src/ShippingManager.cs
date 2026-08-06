@@ -11,6 +11,7 @@ using Mafi.Core.Buildings.Cargo.Ships.Modules;
 using Mafi.Core.Economy;
 using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static;
+using Mafi.Core.Notifications;
 using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Simulation;
@@ -39,7 +40,12 @@ namespace ShippingPP;
 public class ShippingManager
 {
     /// <summary>Version stamp of this manager's own save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 7;
+    private const int SAVE_VERSION = 8;
+
+    /// <summary>The "ship has no home port" warning; registered in
+    /// <see cref="Terminals.LocalTerminalData"/> at proto-registration time.</summary>
+    public static readonly EntityNotificationProto.ID ShipHasNoHomeNotifId =
+        new EntityNotificationProto.ID("ShippingPP_ShipHasNoHomePort");
 
     /// <summary>How many ships may wait (hold at anchor) for one dock, on top of the one being
     /// served. Docks with a full queue are not offered to further ships.</summary>
@@ -110,6 +116,9 @@ public class ShippingManager
     private readonly Lyst<Lines.ShippingLine> m_lines;
     /// <summary>Which line each assigned ship follows (absent = automatic network dispatch).</summary>
     private readonly Dict<CargoShipV2, int> m_shipLines;
+    /// <summary>Active "no home port" warnings, one per orphaned ship (entries exist only for
+    /// ships that are or recently were orphaned; healthy ships never get one).</summary>
+    private readonly Dict<CargoShipV2, EntityNotificator> m_orphanNotifs;
     private int m_nextLineId;
     private readonly Lyst<CargoDepot> m_toRemoveTmp;
     private readonly EntitiesManager m_entitiesManager;
@@ -141,6 +150,7 @@ public class ShippingManager
         m_lastServed = new Dict<CargoDepot, int>();
         m_lines = new Lyst<Lines.ShippingLine>();
         m_shipLines = new Dict<CargoShipV2, int>();
+        m_orphanNotifs = new Dict<CargoShipV2, EntityNotificator>();
         m_nextLineId = 1;
         m_toRemoveTmp = new Lyst<CargoDepot>();
         m_entitiesManager = entitiesManager;
@@ -291,6 +301,129 @@ public class ShippingManager
             }
         }
         return count;
+    }
+
+    private static System.Reflection.MethodInfo s_cargoShipSlotSetter;
+    private static bool s_slotSetterFailed;
+
+    /// <summary>
+    /// Keeps the vanilla depot ship slot of every local terminal empty. The mod tracks its
+    /// fleets itself (<see cref="m_localShips"/> + <see cref="CargoShipV2.AssignedDepot"/>);
+    /// the slot's remaining vanilla effects are only harmful — most notably the depot destroys
+    /// its slot ship when the depot is demolished, which would make one ship of the fleet die
+    /// with the terminal while its siblings survive as re-homable orphans. Idempotent sweep:
+    /// also migrates saves from when the first-built ship still took the slot.
+    /// </summary>
+    private void vacateVanillaShipSlots()
+    {
+        if (s_slotSetterFailed)
+        {
+            return;
+        }
+        foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
+        {
+            if (terminal.CargoShip.IsNone)
+            {
+                continue;
+            }
+            if (s_cargoShipSlotSetter == null)
+            {
+                s_cargoShipSlotSetter = typeof(CargoDepot).GetProperty("CargoShip")
+                    ?.GetSetMethod(nonPublic: true);
+                if (s_cargoShipSlotSetter == null)
+                {
+                    s_slotSetterFailed = true;
+                    Log.Error("Shipping++: CargoDepot.CargoShip setter not found; vanilla "
+                        + "ship slots stay occupied (slot ships die with their terminal).");
+                    return;
+                }
+            }
+            Log.Info($"Shipping++: vacating vanilla ship slot of terminal {terminal.Id}.");
+            s_cargoShipSlotSetter.Invoke(terminal,
+                new object[] { Option<CargoShipV2>.None });
+        }
+    }
+
+    /// <summary>A local ship whose home terminal is gone. Orphaned ships cannot take network
+    /// jobs (all trades route through home) and cannot make emergency refuel runs — the player
+    /// must give them a new home port (button in the ship window).</summary>
+    public static bool IsShipOrphaned(CargoShipV2 ship)
+    {
+        CargoDepot home = ship.AssignedDepot.ValueOrNull;
+        return home == null || home.IsDestroyed;
+    }
+
+    /// <summary>Raises the per-ship "no home port" warning for orphaned ships and clears it
+    /// once the ship is re-homed or gone. Notificators are created lazily on first orphaning
+    /// and dropped when their ship dies.</summary>
+    private void updateOrphanNotifications()
+    {
+        var dead = new Lyst<CargoShipV2>();
+        foreach (KeyValuePair<CargoShipV2, EntityNotificator> pair in m_orphanNotifs)
+        {
+            if (pair.Key.IsDestroyed || !m_localShips.Contains(pair.Key))
+            {
+                EntityNotificator notif = pair.Value;
+                notif.Deactivate(pair.Key.Context.NotificationsManager);
+                dead.Add(pair.Key);
+            }
+        }
+        foreach (CargoShipV2 ship in dead)
+        {
+            m_orphanNotifs.Remove(ship);
+        }
+        foreach (CargoShipV2 ship in m_localShips)
+        {
+            if (ship.IsDestroyed)
+            {
+                continue;
+            }
+            bool orphaned = IsShipOrphaned(ship);
+            if (!m_orphanNotifs.TryGetValue(ship, out EntityNotificator notif))
+            {
+                if (!orphaned)
+                {
+                    continue;
+                }
+                notif = ship.Context.NotificationsManager
+                    .CreateNotificatorFor(ShipHasNoHomeNotifId);
+            }
+            notif.NotifyIff(orphaned, ship);
+            m_orphanNotifs[ship] = notif; // EntityNotificator is a struct — store the mutation.
+        }
+    }
+
+    /// <summary>
+    /// Re-homes a local ship to another terminal (player action from the ship window). Returns
+    /// an error string, or null on success. The ship's cargo modules re-mirror the new home's
+    /// module layout; like reconfiguring modules on a live home terminal, vanilla destroys the
+    /// cargo of ship modules whose type changes in the process.
+    /// </summary>
+    public string SetShipHome(CargoShipV2 ship, LocalTerminal terminal)
+    {
+        if (ship.IsDestroyed || !m_localShips.Contains(ship))
+        {
+            return "Not a local ship.";
+        }
+        if (terminal.IsDestroyed || !terminal.IsConstructed)
+        {
+            return "The terminal is not operational.";
+        }
+        CargoDepot oldHome = ship.AssignedDepot.ValueOrNull;
+        if (oldHome == terminal)
+        {
+            return null;
+        }
+        ship.AssignCargoDepot(terminal);
+        // The new home's ship-fuel buffer must hold this ship's reserve (the job the vanilla
+        // depot ship slot used to do — local ships don't use it).
+        object buffer = ProtoUtils.GetField(typeof(CargoDepot), terminal, "m_fuelBuffer");
+        (buffer as Mafi.Core.Buildings.Storages.LogisticsBuffer)
+            ?.IncreaseCapacityTo(ship.GetFuelReserveNeeded());
+        // Any queue position or berth grant at the old home is meaningless now.
+        ReleaseDockClaim(ship);
+        Log.Info($"Shipping++: ship {ship.Id} re-homed to terminal {terminal.Id}.");
+        return null;
     }
 
     // ------------------------------------------------------------------ lines
@@ -746,6 +879,8 @@ public class ShippingManager
         stepBuilds();
         if (++m_tickCounter % SCAN_PERIOD_TICKS == 0)
         {
+            vacateVanillaShipSlots();
+            updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
             pruneDestroyedShips();
             syncModuleDirections();
         }
@@ -892,9 +1027,10 @@ public class ShippingManager
 
     /// <summary>
     /// Creates a ship homed at the terminal and tracks it as a local ship. The first ship
-    /// spawns docked and takes the vanilla depot's ship slot (which also sizes the fuel
-    /// buffer); further ships spawn on the water at the dock approach — their job provider
-    /// then queues them for a berth like any other arrival.
+    /// spawns docked; further ships spawn on the water at the dock approach — their job
+    /// provider then queues them for a berth like any other arrival. Local ships never occupy
+    /// the vanilla depot's ship slot (see <see cref="vacateVanillaShipSlots"/>); the slot's
+    /// one useful job — sizing the terminal's ship-fuel buffer — is done here directly.
     /// </summary>
     private void createShipDockedAt(CargoDepot terminal)
     {
@@ -907,19 +1043,19 @@ public class ShippingManager
         {
             ship.SpawnAtDock(terminal);
         }
-        if (terminal.CargoShip.IsNone)
-        {
-            terminal.ReplaceShipAndDestroyCurrent(ship);
-        }
-        // Commissioning fuel from the terminal's own fuel buffer, as far as it stretches —
-        // a ship that spawns away from the dock cannot refuel until it docks, but needs leg
-        // fuel to take its first job.
         object buffer = ProtoUtils.GetField(typeof(CargoDepot), terminal, "m_fuelBuffer");
-        if (buffer is Mafi.Core.Buildings.Storages.LogisticsBuffer fuelBuffer
-            && fuelBuffer.Quantity.IsPositive)
+        if (buffer is Mafi.Core.Buildings.Storages.LogisticsBuffer fuelBuffer)
         {
-            Quantity taken = fuelBuffer.Quantity - ship.StoreFuelAsMuchAs(fuelBuffer.Quantity);
-            fuelBuffer.RemoveExactly(taken);
+            fuelBuffer.IncreaseCapacityTo(ship.GetFuelReserveNeeded());
+            // Commissioning fuel from the terminal's own fuel buffer, as far as it stretches —
+            // a ship that spawns away from the dock cannot refuel until it docks, but needs
+            // leg fuel to take its first job.
+            if (fuelBuffer.Quantity.IsPositive)
+            {
+                Quantity taken = fuelBuffer.Quantity
+                    - ship.StoreFuelAsMuchAs(fuelBuffer.Quantity);
+                fuelBuffer.RemoveExactly(taken);
+            }
         }
         m_localShips.Add(ship);
         Log.Info($"Shipping++: ship {ship.Id} built at terminal {terminal.Id} "
@@ -1019,6 +1155,12 @@ public class ShippingManager
             CargoDepot.Serialize(pair.Key, writer);
             CargoShipV2.Serialize(pair.Value, writer);
         }
+        writer.WriteInt(m_orphanNotifs.Count);
+        foreach (KeyValuePair<CargoShipV2, EntityNotificator> pair in m_orphanNotifs)
+        {
+            CargoShipV2.Serialize(pair.Key, writer);
+            EntityNotificator.Serialize(pair.Value, writer);
+        }
     }
 
     public static ShippingManager Deserialize(BlobReader reader)
@@ -1107,6 +1249,17 @@ public class ShippingManager
             }
         }
         reader.SetField(this, "m_berthGrants", berthGrants);
+        var orphanNotifs = new Dict<CargoShipV2, EntityNotificator>();
+        if (version >= 8)
+        {
+            int notifCount = reader.ReadInt();
+            for (int i = 0; i < notifCount; i++)
+            {
+                CargoShipV2 ship = CargoShipV2.Deserialize(reader);
+                orphanNotifs[ship] = EntityNotificator.Deserialize(reader);
+            }
+        }
+        reader.SetField(this, "m_orphanNotifs", orphanNotifs);
         s_current = this;
     }
 

@@ -690,6 +690,13 @@ public class ShippingLinesManagerWindow : Window
 
         private int m_lineIdForSelection = -1;
         private int m_selectedStopsCount;
+        /// <summary>Ship whose new home port is being picked on the map (null = not picking).
+        /// This mode is entered from the ship window, not from the lines window.</summary>
+        private CargoShipV2 m_shipForHome;
+
+        /// <summary>The controller of the current session — the ship-inspector patch (plain
+        /// Harmony code outside DI) starts home-port picking through this.</summary>
+        public static Controller Current { get; private set; }
 
         public bool IsVisible => true;
         public bool DeactivateShortcutsIfNotVisible => true;
@@ -699,9 +706,10 @@ public class ShippingLinesManagerWindow : Window
             remove { }
         }
 
-        public override ControllerConfig Config => m_lineIdForSelection >= 0
-            ? ControllerConfig.Tool
-            : ControllerConfig.Window;
+        public override ControllerConfig Config =>
+            m_lineIdForSelection >= 0 || m_shipForHome != null
+                ? ControllerConfig.Tool
+                : ControllerConfig.Window;
 
         public Controller(ControllerContext controllerContext, ToolbarHud toolbar,
             CursorPickingManager cursorPickingManager, CursorManager cursorManager,
@@ -721,6 +729,7 @@ public class ShippingLinesManagerWindow : Window
             m_selectCursor = cursorManager.RegisterCursor(CursorsStyles.InspectorHover);
             toolbar.AddMainMenuButton("Shipping lines".AsLoc(), this,
                 "Assets/Unity/UserInterface/Toolbar/CargoShip.svg", 221f, null);
+            Current = this;
         }
 
         protected override ShippingLinesManagerWindow CreateWindow()
@@ -731,12 +740,81 @@ public class ShippingLinesManagerWindow : Window
 
         protected override void OnActivate()
         {
-            base.Window.Show();
+            // Home-port picking activates this controller as a pure tool — the lines window
+            // stays out of sight.
+            if (m_shipForHome == null)
+            {
+                base.Window.Show();
+            }
+            else
+            {
+                base.Window.Hide();
+            }
         }
 
         protected override void OnDeactivate()
         {
             stopStopSelection(showWindow: false);
+            stopHomeSelection();
+        }
+
+        /// <summary>Enters the map home-port-picking mode for the ship (started from the ship
+        /// window's home-port panel): click a local terminal to make it the ship's new home,
+        /// right-click/Escape to cancel.</summary>
+        public void StartHomeSelection(CargoShipV2 ship)
+        {
+            if (ship == null || ship.IsDestroyed)
+            {
+                return;
+            }
+            stopStopSelection(showWindow: false);
+            m_shipForHome = ship;
+            if (!IsActive)
+            {
+                Context.InputManager.ActivateNewController(this);
+            }
+            base.Window.Hide();
+            m_selectCursor.Show();
+            highlightHomeCandidates();
+        }
+
+        /// <summary>Glow every terminal the ship could be homed at: candidates yellow, the
+        /// current home (if it still exists) white.</summary>
+        private void highlightHomeCandidates()
+        {
+            CargoDepot home = m_shipForHome.AssignedDepot.ValueOrNull;
+            foreach (LocalTerminal terminal in
+                m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
+            {
+                if (isValidHome(terminal))
+                {
+                    setHighlight(terminal,
+                        terminal == home ? HIGHLIGHT_ON_LINE : HIGHLIGHT_CANDIDATE);
+                }
+            }
+        }
+
+        private static bool isValidHome(LocalTerminal terminal)
+        {
+            return !terminal.IsDestroyed && terminal.IsConstructed;
+        }
+
+        private void stopHomeSelection()
+        {
+            if (m_shipForHome == null)
+            {
+                return;
+            }
+            m_shipForHome = null;
+            m_selectCursor.Hide();
+            m_cursorMessage.Hide();
+            clearHighlights();
+            // Entered as a tool from the ship window — leave the input stack entirely instead
+            // of falling back to the (hidden) lines window.
+            if (IsActive)
+            {
+                Context.InputManager.DeactivateController(this);
+            }
         }
 
         /// <summary>Enters the map stop-picking mode for the line (vanilla station-selection
@@ -793,6 +871,10 @@ public class ShippingLinesManagerWindow : Window
 
         public override bool InputUpdate()
         {
+            if (m_shipForHome != null)
+            {
+                return homeSelectionInputUpdate();
+            }
             if (m_lineIdForSelection < 0)
             {
                 return base.InputUpdate();
@@ -846,6 +928,37 @@ public class ShippingLinesManagerWindow : Window
                 && (entity is LocalTerminal || entity.Prototype is NavBuoyProto);
         }
 
+        private bool homeSelectionInputUpdate()
+        {
+            if (m_shipForHome.IsDestroyed || m_shortcutsManager.IsSecondaryActionUp
+                || UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Escape))
+            {
+                stopHomeSelection();
+                return true;
+            }
+            Option<LocalTerminal> terminal =
+                m_cursorPickingManager.PickEntity<LocalTerminal>(isValidHome);
+            updateHoverHighlight(terminal.ValueOrNull);
+            if (terminal.HasValue)
+            {
+                m_cursorMessage.MessageInfo(
+                    $"Make \"{terminal.Value.GetTitle()}\" the ship's home port".AsLoc());
+            }
+            else
+            {
+                m_cursorMessage.MessageInfo(("Click a local terminal to make it this ship's "
+                    + "new home port (right-click: cancel)").AsLoc());
+            }
+            if (m_shortcutsManager.IsPrimaryActionDown && terminal.HasValue)
+            {
+                m_inputScheduler.ScheduleInputCmd(new Terminals.SetShipHomeCmd(
+                    m_shipForHome.Id, terminal.Value.Id));
+                stopHomeSelection();
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>Restores the previously hovered entity's base glow and turns the newly
         /// hovered candidate green.</summary>
         private void updateHoverHighlight(Mafi.Core.Entities.Static.StaticEntity hovered)
@@ -856,16 +969,28 @@ public class ShippingLinesManagerWindow : Window
             }
             if (m_hoveredEntity != null && m_highlights.ContainsKey(m_hoveredEntity))
             {
-                ShippingLine line = m_shippingManager.TryGetLine(m_lineIdForSelection);
-                bool onLine = line != null && line.ContainsStop(m_hoveredEntity);
-                setHighlight(m_hoveredEntity,
-                    onLine ? HIGHLIGHT_ON_LINE : HIGHLIGHT_CANDIDATE);
+                setHighlight(m_hoveredEntity, baseHighlightColor(m_hoveredEntity));
             }
             if (hovered != null)
             {
                 setHighlight(hovered, HIGHLIGHT_HOVERED);
             }
             m_hoveredEntity = hovered;
+        }
+
+        /// <summary>The un-hovered glow of an entity in the current picking mode: white for
+        /// "already chosen" (stop on the line / the ship's current home), yellow candidates.</summary>
+        private ColorRgba baseHighlightColor(Mafi.Core.Entities.Static.StaticEntity entity)
+        {
+            if (m_shipForHome != null)
+            {
+                return entity == m_shipForHome.AssignedDepot.ValueOrNull
+                    ? HIGHLIGHT_ON_LINE
+                    : HIGHLIGHT_CANDIDATE;
+            }
+            ShippingLine line = m_shippingManager.TryGetLine(m_lineIdForSelection);
+            bool onLine = line != null && line.ContainsStop(entity);
+            return onLine ? HIGHLIGHT_ON_LINE : HIGHLIGHT_CANDIDATE;
         }
 
         private void stopStopSelection(bool showWindow)

@@ -103,6 +103,16 @@ public sealed class ShippingPPMod : IMod
             Log.Error($"Shipping++: failed to apply local ship provider patch: {ex.Message}");
         }
 
+        // "Home port" panel in the vanilla cargo ship window (shown for local ships only).
+        try
+        {
+            Ships.ShipHomePortPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply ship home-port panel patch: {ex.Message}");
+        }
+
         // Per-module offer/request direction and free product choice on terminal modules.
         try
         {

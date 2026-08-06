@@ -246,7 +246,17 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         if (home != null && dockedAt != home)
         {
             // Visit finished — sail home (where the fetched cargo gets unloaded).
-            if (home.IsDestroyed || home.IsAccessBlocked)
+            if (home.IsDestroyed)
+            {
+                // Orphaned at a foreign berth: don't block it forever — yield to any waiting
+                // ship and idle at the anchor until the player assigns a new home port.
+                if (manager.DockHasWaiters(dockedAt, m_ship))
+                {
+                    holdNear(dockedAt, manager);
+                }
+                return;
+            }
+            if (home.IsAccessBlocked)
             {
                 return;
             }
@@ -566,6 +576,13 @@ public class LocalShipJobProvider : ICargoShipJobProvider
 
     public LocStrFormatted GetShipStatus(out StateForUi state)
     {
+        if (ShippingManager.IsShipOrphaned(m_ship)
+            && ShippingManager.Current?.GetLineIdFor(m_ship) == null)
+        {
+            state = StateForUi.Danger;
+            return ("No home port — the home terminal was destroyed. Select a new home port "
+                + "in this window to put the ship back into service.").AsLoc();
+        }
         if (m_ship.HasJobs)
         {
             state = StateForUi.Positive;
