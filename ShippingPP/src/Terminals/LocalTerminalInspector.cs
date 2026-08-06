@@ -68,16 +68,23 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             {
                 ScheduleCommand(new SetShipConstructionCmd(Entity.Id, isConstructing: true));
             }, allowKeyPresses: false);
-        string costText = "";
-        foreach (ProductQuantity pq in ShippingManager.ShipBuildCost.Products)
+        // The cost depends on the terminal tier (bigger terminals build bigger ships), so the
+        // tooltip is built per shown entity, not once.
+        this.Observe(() => Entity.Prototype).Do(delegate(CargoDepotProto proto)
         {
-            costText += (costText.Length == 0 ? "" : ", ")
-                + $"{pq.Quantity.Value}x {pq.Product.Strings.Name.TranslatedString}";
-        }
-        buildBtn.Tooltip(("Builds this terminal's cargo ship on site: the construction materials "
-            + "are requested from truck logistics, and the ship enters service at this terminal "
-            + "once everything is delivered."
-            + (costText.Length == 0 ? "" : $" Requires: {costText}.")).AsLoc());
+            string costText = "";
+            foreach (ProductQuantity pq in ShippingManager.GetShipBuildCost(Entity).Products)
+            {
+                costText += (costText.Length == 0 ? "" : ", ")
+                    + $"{pq.Quantity.Value}x {pq.Product.Strings.Name.TranslatedString}";
+            }
+            int modules = proto.CargoShipProto != null
+                ? proto.CargoShipProto.MaximumModulesCount : 2;
+            buildBtn.Tooltip(($"Builds a cargo ship ({modules} modules) on site: the "
+                + "construction materials are requested from truck logistics, and the ship "
+                + "enters service at this terminal once everything is delivered."
+                + (costText.Length == 0 ? "" : $" Requires: {costText}.")).AsLoc());
+        });
 
         var constrUi = new ConstructionUi();
         PanelFooterRow constrUiPanel;
@@ -88,7 +95,10 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             buildBtn
         }).Title("Cargo ships".AsLoc(), ("Ships built on site from delivered materials, homed "
             + "at this terminal. Build as many as you like — arrivals queue up and hold at "
-            + "anchor while the dock serves one ship at a time.").AsLoc());
+            + "anchor while the dock serves one ship at a time. A ship's cargo modules mirror "
+            + "this terminal's modules, so at least one module must be built before a ship can "
+            + "be laid down; ships gain the remaining modules automatically as more are built "
+            + "on the terminal.").AsLoc());
         this.Observe(() => m_shippingManager.CountShipsHomedAt(Entity))
             .Do(delegate(int count)
             {
@@ -105,9 +115,13 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
         }, () => EntityValidationResult.Success);
 
         this.Observe(() => m_shippingManager.IsBuildingShip(Entity))
-            .Do(delegate(bool isBuilding)
+            .Observe(() => ShippingManager.CountBuiltModules(Entity))
+            .Do(delegate(bool isBuilding, int builtModules)
             {
                 buildBtn.Visible(!isBuilding);
+                // A ship without cargo modules to mirror would be useless — require at least
+                // one module on the terminal before a ship can be laid down.
+                buildBtn.Enabled(builtModules > 0);
             });
         this.Observe(() => m_shippingManager.TryGetShipBuildProgress(Entity))
             .DoOnSync(delegate(Option<ConstructionProgress> progress)

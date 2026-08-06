@@ -51,7 +51,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
     /// the dock's required ocean area, subsequent queue positions spaced a ship length
     /// further out.</summary>
     private const int ANCHOR_BASE_DIST = 14;
-    private const int ANCHOR_SPACING = 30;
+    private const int ANCHOR_GAP = 4;
     private const int ANCHOR_TOLERANCE = 10;
 
     private readonly CargoShipV2 m_ship;
@@ -356,7 +356,15 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             dy = outward.Y.ToFloat();
             length = 1f;
         }
-        float distance = 2f * length + ANCHOR_BASE_DIST + ANCHOR_SPACING * index;
+        // Spacing scales with the ship's own pathfinding clearance so large ships (up to
+        // 61x23 tiles for the 8-module tier) don't overlap their neighbors at anchor.
+        float shipLength = 31f;
+        if (m_ship.Prototype is CargoShipProto shipProto)
+        {
+            shipLength = shipProto.PathFindingParams.RequiredClearance.X;
+        }
+        float distance = 2f * length + ANCHOR_BASE_DIST + shipLength / 2f
+            + (shipLength + ANCHOR_GAP) * index;
         var anchor = new Tile2f(
             Fix32.FromFloat(dockPosition.X.ToFloat() + dx / length * distance),
             Fix32.FromFloat(dockPosition.Y.ToFloat() + dy / length * distance));

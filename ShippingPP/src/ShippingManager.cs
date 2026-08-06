@@ -58,11 +58,30 @@ public class ShippingManager
     private static ShippingManager s_current;
 
     /// <summary>
-    /// Materials to build one local cargo ship. Set at proto-registration time (vanilla's price
-    /// of a cargo ship: the ships settlement sells one for 600 Construction parts III). The ship
-    /// proto's own cost is empty — vanilla ships are salvaged wrecks, never built.
+    /// Materials to build one MODULE of a local cargo ship; a terminal's ship costs this times
+    /// its ship's module count (2/4/6/8 per terminal tier). Set at proto-registration time.
+    /// The ship proto's own cost is empty — vanilla ships are salvaged wrecks, never built.
     /// </summary>
-    public static AssetValue ShipBuildCost;
+    public static AssetValue ShipBuildCostPerModule;
+
+    /// <summary>Materials to build the terminal's cargo ship: the per-module base scaled by the
+    /// module count of the ship tier this terminal builds.</summary>
+    public static AssetValue GetShipBuildCost(CargoDepot terminal)
+    {
+        AssetValue perModule = ShipBuildCostPerModule;
+        CargoShipProto shipProto = terminal.Prototype.CargoShipProto;
+        if (perModule.IsEmpty || shipProto == null)
+        {
+            return perModule;
+        }
+        var products = new Lyst<ProductQuantity>();
+        foreach (ProductQuantity pq in perModule.Products)
+        {
+            products.Add(pq.Product.WithQuantity(
+                (pq.Quantity.Value * shipProto.MaximumModulesCount).Quantity()));
+        }
+        return new AssetValue(products.ToImmutableArray());
+    }
 
     private readonly Dict<CargoDepot, ShipBuildState> m_builds;
     private readonly Set<CargoShipV2> m_localShips;
@@ -738,6 +757,20 @@ public class ShippingManager
         return m_builds.ContainsKey(terminal);
     }
 
+    /// <summary>How many module slots of the terminal have a module built on them.</summary>
+    public static int CountBuiltModules(CargoDepot terminal)
+    {
+        int count = 0;
+        for (int i = 0; i < terminal.Modules.Length; i++)
+        {
+            if (terminal.Modules[i].HasValue)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
     public Option<ConstructionProgress> TryGetShipBuildProgress(CargoDepot terminal)
     {
         return m_builds.TryGetValue(terminal, out ShipBuildState state)
@@ -764,6 +797,13 @@ public class ShippingManager
         {
             return "A ship is already under construction.";
         }
+        // A ship's cargo modules mirror the home terminal's modules — with none built, the
+        // ship could not carry anything. Partial fits are fine: the ship gains the missing
+        // modules automatically when more are built on the terminal later.
+        if (CountBuiltModules(terminal) == 0)
+        {
+            return "Build at least one terminal module first.";
+        }
 
         // Sandbox / insta-build: the ship is created immediately and for free, matching how
         // vanilla construction behaves with insta-build enabled.
@@ -773,7 +813,7 @@ public class ShippingManager
             return null;
         }
 
-        AssetValue cost = ShipBuildCost;
+        AssetValue cost = GetShipBuildCost(terminal);
         if (cost.IsEmpty)
         {
             Log.Warning("Shipping++: no ship build cost configured; building the ship for free.");
