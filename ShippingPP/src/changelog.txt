@@ -1,6 +1,45 @@
 Shipping++ — Changelog
 ================================
 
+v0.3.0
+------
+Terminal tiers — bigger docks, bigger ships:
+- The local cargo terminal now comes in all four vanilla cargo depot
+  sizes (2/4/6/8 module slots), grouped into one toolbar entry with
+  a size popup like the vanilla depots, unlocked by the same
+  research tiers.
+- Bigger terminals build bigger ships: each tier's ship matches the
+  terminal's module count. Ship cost scales per module (60 Vehicle
+  Parts II + 50 Steel per module, so the smallest ship still costs
+  120 + 100). Any local ship can dock at any terminal regardless of
+  size.
+- Building a ship requires at least one module on the terminal (a
+  ship mirrors its home terminal's modules and would otherwise sail
+  empty-handed). Partially equipped terminals are fine — their ships
+  gain the missing cargo modules automatically when more modules are
+  built later.
+- Waiting ships anchor with spacing based on their actual size, so
+  large ships no longer overlap at anchor.
+
+Shipping lines manager overhaul (vanilla trains manager design):
+- The window now mirrors the vanilla train lines manager: lines list
+  with color badge, stop/ship counts and selection arrow; detail
+  panel with rename title; stops shown on a line-colored route
+  diagram with numbered badges.
+- Stops are reordered by dragging their handle, exactly like train
+  schedule stops.
+- Lines have colors: pick from the vanilla train-line palette in the
+  line header; the color drives the list badge and route diagram.
+- Stops are added by clicking terminals and buoys directly on the
+  map: candidates glow yellow, the hovered one green, stops already
+  on the line white. Hold shift to add several stops in a row;
+  right-click or Escape to finish. (The old add-stop dropdown is
+  gone.)
+- Stop rows have focus-camera and remove buttons; ship rows show
+  home terminal and assignment with focus and assign/unassign.
+- With no line selected, the first line is selected automatically.
+- A warning appears when a line has fewer than two terminal stops.
+
 v0.2.1
 ------
 - Added this changelog to the mod package (no gameplay changes).

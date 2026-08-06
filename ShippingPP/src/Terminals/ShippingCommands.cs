@@ -177,6 +177,8 @@ public class ModifyLineCmd : InputCommand
     public const byte ACTION_ASSIGN_SHIP = 4;
     public const byte ACTION_UNASSIGN_SHIP = 5;
     public const byte ACTION_RENAME = 6;
+    public const byte ACTION_REORDER_STOP = 7;
+    public const byte ACTION_SET_COLOR = 8;
 
     public readonly byte Action;
 
@@ -188,17 +190,27 @@ public class ModifyLineCmd : InputCommand
     /// <summary>New name for the rename action.</summary>
     public readonly string Name;
 
+    /// <summary>Stop index for the remove/reorder actions (reorder: the old index), palette
+    /// index for the color action.</summary>
+    public readonly int Arg;
+
+    /// <summary>Second argument: the new stop index for the reorder action.</summary>
+    public readonly int Arg2;
+
     private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
         (obj, writer) => ((ModifyLineCmd)obj).SerializeData(writer);
     private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
         (obj, reader) => ((ModifyLineCmd)obj).DeserializeData(reader);
 
-    public ModifyLineCmd(byte action, int lineId, EntityId targetId, string name = "")
+    public ModifyLineCmd(byte action, int lineId, EntityId targetId, string name = "",
+        int arg = 0, int arg2 = 0)
     {
         Action = action;
         LineId = lineId;
         TargetId = targetId;
         Name = name ?? "";
+        Arg = arg;
+        Arg2 = arg2;
     }
 
     public static void Serialize(ModifyLineCmd value, BlobWriter writer)
@@ -216,6 +228,8 @@ public class ModifyLineCmd : InputCommand
         writer.WriteInt(LineId);
         EntityId.Serialize(TargetId, writer);
         writer.WriteString(Name);
+        writer.WriteInt(Arg);
+        writer.WriteInt(Arg2);
     }
 
     public new static ModifyLineCmd Deserialize(BlobReader reader)
@@ -236,6 +250,8 @@ public class ModifyLineCmd : InputCommand
         reader.SetField(this, "LineId", reader.ReadInt());
         reader.SetField(this, "TargetId", EntityId.Deserialize(reader));
         reader.SetField(this, "Name", reader.ReadString());
+        reader.SetField(this, "Arg", reader.ReadInt());
+        reader.SetField(this, "Arg2", reader.ReadInt());
     }
 }
 
@@ -333,7 +349,13 @@ internal class ShippingCommandsProcessor
                 if (tryGetLineStop(cmd.TargetId,
                     out Mafi.Core.Entities.Static.StaticEntity removed))
                 {
-                    m_shippingManager.TryGetLine(cmd.LineId)?.RemoveStop(removed);
+                    // Prefer removal by row index (stops may repeat on a line); falls back to
+                    // by-entity when the list shifted since the UI was built.
+                    Lines.ShippingLine line = m_shippingManager.TryGetLine(cmd.LineId);
+                    if (line != null && !line.RemoveStopAt(cmd.Arg, removed))
+                    {
+                        line.RemoveStop(removed);
+                    }
                     cmd.SetResultSuccess();
                     return;
                 }
@@ -361,6 +383,24 @@ internal class ShippingCommandsProcessor
                 if (renamed != null && !string.IsNullOrEmpty(cmd.Name))
                 {
                     renamed.Name = cmd.Name;
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_REORDER_STOP:
+                if (m_shippingManager.TryGetLine(cmd.LineId)?.MoveStopTo(cmd.Arg, cmd.Arg2)
+                    == true)
+                {
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_SET_COLOR:
+                Lines.ShippingLine colored = m_shippingManager.TryGetLine(cmd.LineId);
+                if (colored != null)
+                {
+                    var palette = Mafi.Core.Trains.TrainLine.COLOR_PALETTE;
+                    colored.Color = palette[Math.Abs(cmd.Arg) % palette.Length];
                     cmd.SetResultSuccess();
                     return;
                 }

@@ -2,6 +2,7 @@ using System;
 using Mafi.Collections;
 using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Entities.Static;
+using Mafi.Core.Trains;
 using Mafi.Serialization;
 
 namespace ShippingPP.Lines;
@@ -15,11 +16,15 @@ namespace ShippingPP.Lines;
 /// </summary>
 public sealed class ShippingLine
 {
-    private const int SAVE_VERSION = 2;
+    private const int SAVE_VERSION = 3;
 
     public int Id { get; private set; }
 
     public string Name { get; set; }
+
+    /// <summary>The line's display color — the vanilla train-line color type, so the vanilla
+    /// palette and color UI components apply as-is.</summary>
+    public TrainLineColor Color { get; set; }
 
     private Lyst<StaticEntity> m_stops;
 
@@ -32,7 +37,14 @@ public sealed class ShippingLine
     {
         Id = id;
         Name = $"Line {id}";
+        Color = DefaultColorFor(id);
         m_stops = new Lyst<StaticEntity>();
+    }
+
+    /// <summary>New lines cycle through the vanilla train-line palette by id.</summary>
+    public static TrainLineColor DefaultColorFor(int id)
+    {
+        return TrainLine.COLOR_PALETTE[Math.Abs(id - 1) % TrainLine.COLOR_PALETTE.Length];
     }
 
     public int StopCount => m_stops.Count;
@@ -76,6 +88,32 @@ public sealed class ShippingLine
         return true;
     }
 
+    /// <summary>Moves the stop from one position to another (drag-reorder semantics: remove
+    /// at <paramref name="from"/>, re-insert at <paramref name="to"/>).</summary>
+    public bool MoveStopTo(int from, int to)
+    {
+        if (from < 0 || to < 0 || from >= m_stops.Count || to >= m_stops.Count || from == to)
+        {
+            return false;
+        }
+        StaticEntity stop = m_stops[from];
+        m_stops.RemoveAt(from);
+        m_stops.Insert(to, stop);
+        return true;
+    }
+
+    /// <summary>Removes the stop at the index, if it is the given entity (guards against the
+    /// list having shifted since the UI was built).</summary>
+    public bool RemoveStopAt(int index, StaticEntity expected)
+    {
+        if (index >= 0 && index < m_stops.Count && m_stops[index] == expected)
+        {
+            m_stops.RemoveAt(index);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Removes the last occurrence of the stop from the list.</summary>
     public bool RemoveStop(StaticEntity stop)
     {
@@ -115,6 +153,7 @@ public sealed class ShippingLine
         writer.WriteInt(SAVE_VERSION);
         writer.WriteInt(Id);
         writer.WriteString(Name);
+        TrainLineColor.Serialize(Color, writer);
         Lyst<StaticEntity>.Serialize(m_stops, writer);
     }
 
@@ -134,6 +173,7 @@ public sealed class ShippingLine
         int version = reader.ReadInt();
         Id = reader.ReadInt();
         Name = reader.ReadString();
+        Color = version >= 3 ? TrainLineColor.Deserialize(reader) : DefaultColorFor(Id);
         if (version >= 2)
         {
             m_stops = Lyst<StaticEntity>.Deserialize(reader);
