@@ -807,6 +807,7 @@ public class ShippingLinesManagerWindow : Window
         private readonly EntitiesManager m_entitiesManager;
         private readonly Mafi.Unity.Entities.EntitiesRenderingManager m_entitiesRenderer;
         private readonly ShippingManager m_shippingManager;
+        private readonly UnlockedProtosDbForUi m_unlockedProtosDb;
 
         private readonly Dict<Mafi.Core.Entities.Static.StaticEntity, ulong> m_highlights =
             new Dict<Mafi.Core.Entities.Static.StaticEntity, ulong>();
@@ -822,13 +823,12 @@ public class ShippingLinesManagerWindow : Window
         /// Harmony code outside DI) starts home-port picking through this.</summary>
         public static Controller Current { get; private set; }
 
-        public bool IsVisible => true;
+        /// <summary>Whether the toolbar shows the button — only once local terminals are
+        /// researched (the vanilla trains manager gates its button on the trains technology
+        /// the same way).</summary>
+        public bool IsVisible { get; private set; }
         public bool DeactivateShortcutsIfNotVisible => true;
-        public event Action<IToolbarItemController> VisibilityChanged
-        {
-            add { }
-            remove { }
-        }
+        public event Action<IToolbarItemController> VisibilityChanged;
 
         public override ControllerConfig Config =>
             m_lineIdForSelection >= 0 || m_shipForHome != null
@@ -840,7 +840,7 @@ public class ShippingLinesManagerWindow : Window
             ShortcutsManager shortcutsManager, IInputScheduler inputScheduler,
             NewInstanceOf<CursorMessage> cursorMessage, EntitiesManager entitiesManager,
             Mafi.Unity.Entities.EntitiesRenderingManager entitiesRenderer,
-            ShippingManager shippingManager)
+            ShippingManager shippingManager, UnlockedProtosDbForUi unlockedProtosDb)
             : base(controllerContext, null)
         {
             m_cursorPickingManager = cursorPickingManager;
@@ -850,10 +850,30 @@ public class ShippingLinesManagerWindow : Window
             m_entitiesManager = entitiesManager;
             m_entitiesRenderer = entitiesRenderer;
             m_shippingManager = shippingManager;
+            m_unlockedProtosDb = unlockedProtosDb;
             m_selectCursor = cursorManager.RegisterCursor(CursorsStyles.InspectorHover);
+            // Lines are only useful with local terminals to sail between, so the button shows
+            // up with the research that unlocks them — the vanilla trains manager button
+            // appears with the trains technology in the same way. Terminals registered without
+            // an unlocking research count as unlocked from the start.
+            IsVisible = unlockedProtosDb.AnyUnlocked<LocalTerminalProto>();
             toolbar.AddMainMenuButton(Txt.LinesManager_Title, this,
                 "Assets/Unity/UserInterface/Toolbar/CargoShip.svg", 221f, null);
+            if (!IsVisible)
+            {
+                m_unlockedProtosDb.OnUnlockedSetChangedForUi += onProtosUnlocked;
+            }
             Current = this;
+        }
+
+        private void onProtosUnlocked()
+        {
+            IsVisible = m_unlockedProtosDb.AnyUnlocked<LocalTerminalProto>();
+            if (IsVisible)
+            {
+                m_unlockedProtosDb.OnUnlockedSetChangedForUi -= onProtosUnlocked;
+                this.VisibilityChanged?.Invoke(this);
+            }
         }
 
         protected override ShippingLinesManagerWindow CreateWindow()
