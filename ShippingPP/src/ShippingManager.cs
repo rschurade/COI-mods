@@ -1289,26 +1289,30 @@ public class ShippingManager
         reader.SetField(this, "m_cargoShipFactory", reader.ReadGenericAs<ICargoShipFactory>());
         reader.SetField(this, "m_instaBuildManager", reader.ReadGenericAs<IInstaBuildManager>());
         reader.SetField(this, "m_priorityProvider", BuildBufferPriorityProvider.Deserialize(reader));
-        var dockQueues = new Dict<CargoDepot, Lyst<CargoShipV2>>();
+        // The manually-written entity-keyed dicts below must NOT be filled here: the entity
+        // instances exist but their data (including the id) is only deserialized later, so
+        // inserting now hashes every key under id 0 — colliding keys, overwritten entries and
+        // an unusable hash table once the real ids arrive ("two different instances with the
+        // same ID: 0" in the log). The pairs are parked and inserted in initDictsAfterLoad,
+        // which the reader runs after all data is in — the same trick the vanilla Dict uses.
+        reader.SetField(this, "m_dockQueues", new Dict<CargoDepot, Lyst<CargoShipV2>>());
+        m_loadedDockQueues = new Lyst<KeyValuePair<CargoDepot, Lyst<CargoShipV2>>>();
         if (version >= 6)
         {
             int queueCount = reader.ReadInt();
             for (int i = 0; i < queueCount; i++)
             {
                 CargoDepot terminal = CargoDepot.Deserialize(reader);
-                dockQueues[terminal] = Lyst<CargoShipV2>.Deserialize(reader);
+                m_loadedDockQueues.Add(new KeyValuePair<CargoDepot, Lyst<CargoShipV2>>(
+                    terminal, Lyst<CargoShipV2>.Deserialize(reader)));
             }
         }
         else if (version >= 2)
         {
-            // v2..5 stored a single inbound ship per dock; it becomes a one-entry queue.
-            foreach (KeyValuePair<CargoDepot, CargoShipV2> pair
-                in Dict<CargoDepot, CargoShipV2>.Deserialize(reader))
-            {
-                dockQueues[pair.Key] = new Lyst<CargoShipV2> { pair.Value };
-            }
+            // v2..5 stored a single inbound ship per dock; it becomes a one-entry queue. The
+            // dict is empty until its own delayed load ran, so it too is read in the init step.
+            m_loadedLegacyInbound = Dict<CargoDepot, CargoShipV2>.Deserialize(reader);
         }
-        reader.SetField(this, "m_dockQueues", dockQueues);
         reader.SetField(this, "m_exportModules", (version >= 3)
             ? Set<CargoDepotModule>.Deserialize(reader)
             : new Set<CargoDepotModule>());
@@ -1329,40 +1333,84 @@ public class ShippingManager
             ? Dict<CargoShipV2, int>.Deserialize(reader)
             : new Dict<CargoShipV2, int>());
         m_nextLineId = (version >= 5) ? reader.ReadInt() : 1;
-        var cargoPlans = new Dict<CargoShipV2, CargoPlan>();
+        reader.SetField(this, "m_cargoPlans", new Dict<CargoShipV2, CargoPlan>());
+        m_loadedCargoPlans = new Lyst<KeyValuePair<CargoShipV2, CargoPlan>>();
         if (version >= 6)
         {
             int planCount = reader.ReadInt();
             for (int i = 0; i < planCount; i++)
             {
                 CargoShipV2 ship = CargoShipV2.Deserialize(reader);
-                cargoPlans[ship] = CargoPlan.Deserialize(reader);
+                m_loadedCargoPlans.Add(new KeyValuePair<CargoShipV2, CargoPlan>(
+                    ship, CargoPlan.Deserialize(reader)));
             }
         }
-        reader.SetField(this, "m_cargoPlans", cargoPlans);
-        var berthGrants = new Dict<CargoDepot, CargoShipV2>();
+        reader.SetField(this, "m_berthGrants", new Dict<CargoDepot, CargoShipV2>());
+        m_loadedBerthGrants = new Lyst<KeyValuePair<CargoDepot, CargoShipV2>>();
         if (version >= 7)
         {
             int grantCount = reader.ReadInt();
             for (int i = 0; i < grantCount; i++)
             {
                 CargoDepot terminal = CargoDepot.Deserialize(reader);
-                berthGrants[terminal] = CargoShipV2.Deserialize(reader);
+                m_loadedBerthGrants.Add(new KeyValuePair<CargoDepot, CargoShipV2>(
+                    terminal, CargoShipV2.Deserialize(reader)));
             }
         }
-        reader.SetField(this, "m_berthGrants", berthGrants);
-        var orphanNotifs = new Dict<CargoShipV2, EntityNotificator>();
+        reader.SetField(this, "m_orphanNotifs", new Dict<CargoShipV2, EntityNotificator>());
+        m_loadedOrphanNotifs = new Lyst<KeyValuePair<CargoShipV2, EntityNotificator>>();
         if (version >= 8)
         {
             int notifCount = reader.ReadInt();
             for (int i = 0; i < notifCount; i++)
             {
                 CargoShipV2 ship = CargoShipV2.Deserialize(reader);
-                orphanNotifs[ship] = EntityNotificator.Deserialize(reader);
+                m_loadedOrphanNotifs.Add(new KeyValuePair<CargoShipV2, EntityNotificator>(
+                    ship, EntityNotificator.Deserialize(reader)));
             }
         }
-        reader.SetField(this, "m_orphanNotifs", orphanNotifs);
+        reader.RegisterInitAfterLoad(this, nameof(initDictsAfterLoad), InitPriority.Normal);
         s_current = this;
+    }
+
+    /// <summary>Parked entity-keyed pairs from <see cref="DeserializeData"/>, inserted into the
+    /// real dicts by <see cref="initDictsAfterLoad"/> once entity ids are loaded.</summary>
+    private Lyst<KeyValuePair<CargoDepot, Lyst<CargoShipV2>>> m_loadedDockQueues;
+    private Dict<CargoDepot, CargoShipV2> m_loadedLegacyInbound;
+    private Lyst<KeyValuePair<CargoShipV2, CargoPlan>> m_loadedCargoPlans;
+    private Lyst<KeyValuePair<CargoDepot, CargoShipV2>> m_loadedBerthGrants;
+    private Lyst<KeyValuePair<CargoShipV2, EntityNotificator>> m_loadedOrphanNotifs;
+
+    private void initDictsAfterLoad()
+    {
+        foreach (KeyValuePair<CargoDepot, Lyst<CargoShipV2>> pair in m_loadedDockQueues)
+        {
+            m_dockQueues[pair.Key] = pair.Value;
+        }
+        if (m_loadedLegacyInbound != null)
+        {
+            foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_loadedLegacyInbound)
+            {
+                m_dockQueues[pair.Key] = new Lyst<CargoShipV2> { pair.Value };
+            }
+        }
+        foreach (KeyValuePair<CargoShipV2, CargoPlan> pair in m_loadedCargoPlans)
+        {
+            m_cargoPlans[pair.Key] = pair.Value;
+        }
+        foreach (KeyValuePair<CargoDepot, CargoShipV2> pair in m_loadedBerthGrants)
+        {
+            m_berthGrants[pair.Key] = pair.Value;
+        }
+        foreach (KeyValuePair<CargoShipV2, EntityNotificator> pair in m_loadedOrphanNotifs)
+        {
+            m_orphanNotifs[pair.Key] = pair.Value;
+        }
+        m_loadedDockQueues = null;
+        m_loadedLegacyInbound = null;
+        m_loadedCargoPlans = null;
+        m_loadedBerthGrants = null;
+        m_loadedOrphanNotifs = null;
     }
 
     /// <summary>A dispatched ship's intended exchange at its target terminal.</summary>
