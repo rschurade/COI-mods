@@ -7,7 +7,9 @@ using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
 using Mafi.Core.Buildings.Storages;
+using Mafi.Core.Economy;
 using Mafi.Core.Entities.Static;
+using Mafi.Core.Vehicles;
 
 namespace ShippingPP.Terminals;
 
@@ -31,7 +33,7 @@ internal static class LocalTerminalSim
     private static FieldInfo s_hasShip;
     private static FieldInfo s_hasShipLastStep;
     private static FieldInfo s_reservationManager;
-    private static MethodInfo s_replaceFuelBufferIfNeeded;
+    private static FieldInfo s_vehicleBuffersRegistry;
 
     public static bool TryInitialize()
     {
@@ -48,10 +50,10 @@ internal static class LocalTerminalSim
         s_hasShip = depot.GetField("m_hasShip", ANY);
         s_hasShipLastStep = depot.GetField("m_hasShipLastStep", ANY);
         s_reservationManager = depot.GetField("m_reservationManager", ANY);
-        s_replaceFuelBufferIfNeeded = depot.GetMethod("replaceFuelBufferIfNeeded", ANY);
+        s_vehicleBuffersRegistry = depot.GetField("m_vehicleBuffersRegistry", ANY);
 
         s_initFailed = s_fuelBuffer == null || s_hasShip == null || s_hasShipLastStep == null
-            || s_reservationManager == null || s_replaceFuelBufferIfNeeded == null
+            || s_reservationManager == null || s_vehicleBuffersRegistry == null
             || !LocalCargoExchange.TryInitialize();
         if (s_initFailed)
         {
@@ -85,7 +87,6 @@ internal static class LocalTerminalSim
 
     private static void updateInternal(LocalTerminal terminal)
     {
-        s_replaceFuelBufferIfNeeded.Invoke(terminal, null);
         if (terminal.IsNotEnabled)
         {
             return;
@@ -116,10 +117,24 @@ internal static class LocalTerminalSim
             return;
         }
 
-        // Refuel the docked ship from the terminal's fuel buffer (any local ship, not just our
-        // own — a visiting ship tops up too, same as a truck stop).
+        // The terminal's fuel buffer follows its own fleet's fuel type. Vanilla keys the buffer
+        // product to the depot's slot ship (replaceFuelBufferIfNeeded) — the slot the mod keeps
+        // empty — so the equivalent is done here: when a ship HOMED at this terminal docks
+        // bearing a different fuel (the result of a fuel refit in the ship window), the buffer
+        // is recreated for that fuel. Old-fuel stock returns to the asset pool, the truck
+        // import slider setting carries over.
         var fuelBuffer = (LogisticsBuffer)s_fuelBuffer.GetValue(terminal);
-        if (fuelBuffer.IsNotEmpty())
+        if (docked.AssignedDepot.ValueOrNull == terminal
+            && docked.FuelProto != fuelBuffer.Product)
+        {
+            fuelBuffer = swapFuelBuffer(terminal, fuelBuffer, docked);
+        }
+
+        // Refuel the docked ship from the terminal's fuel buffer (any local ship, not just our
+        // own — a visiting ship tops up too, same as a truck stop), but only with MATCHING
+        // fuel: a visiting ship refitted to another fuel type must not get this terminal's
+        // product pumped into its tank (ProductBuffer.StoreAsMuchAs does not check products).
+        if (fuelBuffer.IsNotEmpty() && fuelBuffer.Product == docked.FuelProto)
         {
             Quantity taken = fuelBuffer.Quantity - docked.StoreFuelAsMuchAs(fuelBuffer.Quantity);
             fuelBuffer.RemoveExactly(taken);
@@ -134,5 +149,32 @@ internal static class LocalTerminalSim
                     manager.IsExportModule(module), manager.ProductsManager);
             }
         }
+    }
+
+    /// <summary>
+    /// Recreates the terminal's ship-fuel buffer for the given ship's fuel type — the reflection
+    /// reimplementation of the vanilla <c>CargoDepot.replaceFuelBufferIfNeeded</c> (which is
+    /// hard-wired to the depot ship slot the mod keeps empty). Stored fuel of the old type is
+    /// returned to the asset pool and the truck import slider setting is preserved.
+    /// </summary>
+    private static LogisticsBuffer swapFuelBuffer(LocalTerminal terminal, LogisticsBuffer old,
+        CargoShipV2 ship)
+    {
+        var registry = (IVehicleBuffersRegistry)s_vehicleBuffersRegistry.GetValue(terminal);
+        Percent importStep = old.ImportUntilPercent;
+        registry.TryUnregisterInputBuffer(old);
+        terminal.Context.AssetTransactionManager.ClearBuffer(old);
+        old.Destroy();
+        var replacement = new LogisticsBuffer(ship.GetFuelReserveNeeded(), ship.FuelProto,
+            usePartialTrucksForHighPriorities: true);
+        if (!terminal.IsLogisticsInputDisabled)
+        {
+            registry.RegisterInputBufferAndAssert(terminal, replacement, terminal);
+        }
+        replacement.SetImportStep(importStep);
+        s_fuelBuffer.SetValue(terminal, replacement);
+        Log.Info($"Shipping++: terminal {terminal.Id} fuel buffer switched to "
+            + $"'{ship.FuelProto.Id}'.");
+        return replacement;
     }
 }

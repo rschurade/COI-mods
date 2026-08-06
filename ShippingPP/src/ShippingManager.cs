@@ -344,6 +344,56 @@ public class ShippingManager
         }
     }
 
+    private static System.Reflection.MethodInfo s_setNewFuelMethod;
+    private static System.Reflection.FieldInfo s_pendingFuelCostField;
+    private static bool s_fuelSwitchReflectFailed;
+
+    /// <summary>
+    /// Completes pending fuel-type switches (the vanilla "replace fuel" button in the ship
+    /// window, fully reused — command, cost and cancel included) for idle local ships. Vanilla
+    /// finishes a switch only while the ship idles AT WORLD between trade journeys — a state
+    /// local ships never reach — so the same completion (private <c>setNewFuel</c> + clearing
+    /// the pending fields) is mirrored here whenever the ship has no active job. The switch
+    /// returns the old tank content to the asset pool; the now-dry ship makes its emergency
+    /// run home, where the terminal's fuel buffer follows the new fuel type (see
+    /// <see cref="Terminals.LocalTerminalSim"/>).
+    /// </summary>
+    private void completePendingFuelSwitches()
+    {
+        if (s_fuelSwitchReflectFailed)
+        {
+            return;
+        }
+        foreach (CargoShipV2 ship in m_localShips)
+        {
+            if (ship.IsDestroyed || ship.PendingFuelToChangeTo.IsNone || ship.HasJobs)
+            {
+                continue;
+            }
+            if (s_setNewFuelMethod == null)
+            {
+                const System.Reflection.BindingFlags ANY = System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Instance;
+                s_setNewFuelMethod = typeof(CargoShipV2).GetMethod("setNewFuel", ANY);
+                s_pendingFuelCostField = typeof(CargoShipV2)
+                    .GetField("m_pendingFuelChangeCost", ANY);
+                if (s_setNewFuelMethod == null || s_pendingFuelCostField == null)
+                {
+                    s_fuelSwitchReflectFailed = true;
+                    Log.Error("Shipping++: CargoShipV2 fuel-switch internals not found; fuel "
+                        + "refits of local ships would stay pending forever.");
+                    return;
+                }
+            }
+            ProductProto newFuel = ship.PendingFuelToChangeTo.Value;
+            s_setNewFuelMethod.Invoke(ship, new object[] { newFuel });
+            ship.PendingFuelToChangeTo = Option<ProductProto>.None;
+            s_pendingFuelCostField.SetValue(ship, AssetValue.Empty);
+            Log.Info($"Shipping++: ship {ship.Id} refitted to fuel '{newFuel.Id}'.");
+        }
+    }
+
     /// <summary>A local ship whose home terminal is gone. Orphaned ships cannot take network
     /// jobs (all trades route through home) and cannot make emergency refuel runs — the player
     /// must give them a new home port (button in the ship window).</summary>
@@ -886,6 +936,7 @@ public class ShippingManager
         if (++m_tickCounter % SCAN_PERIOD_TICKS == 0)
         {
             vacateVanillaShipSlots();
+            completePendingFuelSwitches();
             updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
             pruneDestroyedShips();
             syncModuleDirections();
@@ -1041,22 +1092,37 @@ public class ShippingManager
     private void createShipDockedAt(CargoDepot terminal)
     {
         CargoShipProto shipProto = ((CargoDepotProto)terminal.Prototype).CargoShipProto;
-        Option<ProductProto> fuel = shipProto.AvailableFuels.First.FuelProto.SomeOption();
+        object buffer = ProtoUtils.GetField(typeof(CargoDepot), terminal, "m_fuelBuffer");
+        var fuelBuffer = buffer as Mafi.Core.Buildings.Storages.LogisticsBuffer;
+        // New ships take the fuel the terminal's buffer already handles — after a fleet fuel
+        // refit the buffer carries the new fuel type (see LocalTerminalSim) and a fresh ship
+        // should match its siblings. First ships default to the proto's first fuel (diesel).
+        ProductProto fuelProto = shipProto.AvailableFuels.First.FuelProto;
+        if (fuelBuffer != null)
+        {
+            foreach (CargoShipProto.FuelData fuelData in shipProto.AvailableFuels)
+            {
+                if (fuelData.FuelProto == fuelBuffer.Product)
+                {
+                    fuelProto = fuelData.FuelProto;
+                    break;
+                }
+            }
+        }
         bool dockFree = DockedLocalShipAt(terminal) == null;
-        CargoShipV2 ship = m_cargoShipFactory.AddCargoShip(terminal, shipProto, fuel,
-            skipSpawn: dockFree);
+        CargoShipV2 ship = m_cargoShipFactory.AddCargoShip(terminal, shipProto,
+            fuelProto.SomeOption(), skipSpawn: dockFree);
         if (dockFree)
         {
             ship.SpawnAtDock(terminal);
         }
-        object buffer = ProtoUtils.GetField(typeof(CargoDepot), terminal, "m_fuelBuffer");
-        if (buffer is Mafi.Core.Buildings.Storages.LogisticsBuffer fuelBuffer)
+        if (fuelBuffer != null)
         {
             fuelBuffer.IncreaseCapacityTo(ship.GetFuelReserveNeeded());
             // Commissioning fuel from the terminal's own fuel buffer, as far as it stretches —
             // a ship that spawns away from the dock cannot refuel until it docks, but needs
             // leg fuel to take its first job.
-            if (fuelBuffer.Quantity.IsPositive)
+            if (fuelBuffer.Quantity.IsPositive && fuelBuffer.Product == ship.FuelProto)
             {
                 Quantity taken = fuelBuffer.Quantity
                     - ship.StoreFuelAsMuchAs(fuelBuffer.Quantity);
