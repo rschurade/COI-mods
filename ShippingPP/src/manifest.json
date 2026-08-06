@@ -1,6 +1,6 @@
 {
   "id": "ShippingPP",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "display_name": "Shipping++",
   "description_short": "Local cargo shipping: ships haul products between cargo terminals on your island.",
   "description_long": "Adds local cargo terminals and ships that haul products between them across the water of your own island.\n\nBuild a local cargo terminal (reusing the cargo depot model) at two or more coastal spots, set up terminal modules to offer or request products, and local cargo ships automatically sail between them — real ships with real water pathfinding, docking and crane transfers, just like the vanilla world-trade cargo ships. Terminals come in all four cargo depot sizes (2 to 8 modules), and bigger terminals build bigger ships.\n\nShips are built at the terminal: press the build-ship button and deliver the construction materials, then the ship enters service. Build as many ships per terminal as you like — arriving ships queue up and wait at anchor while the dock serves one ship at a time. Ships consume fuel per journey like vanilla cargo ships.\n\nOptional: set up shipping lines with fixed stops (terminals and navigation buoys) in the lines manager window, and assign ships to a line to sail its route instead of taking automatic network jobs.",

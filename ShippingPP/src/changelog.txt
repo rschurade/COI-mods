@@ -1,6 +1,21 @@
 Shipping++ — Changelog
 ================================
 
+v0.4.1
+------
+Mod compatibility:
+- Fixed local terminals and their modules silently falling back to
+  vanilla cargo depot behavior (import-only modules, only world-minable
+  products selectable) when another installed mod also patches the
+  cargo depot with Harmony. The mod's module handling now always takes
+  effect for local terminals regardless of other mods' patches.
+- The lines manager button in the toolbar now appears with the research
+  that unlocks the local cargo terminal, instead of being available
+  from the start of a new game.
+- If another mod still manages to block the terminal simulation, the
+  log now reports it as an error naming every mod patching the cargo
+  depot — please include your log file when reporting issues.
+
 v0.4.0
 ------
 Home ports:
