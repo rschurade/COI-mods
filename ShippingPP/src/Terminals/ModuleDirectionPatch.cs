@@ -8,7 +8,7 @@ using Mafi.Core.Products;
 namespace ShippingPP.Terminals;
 
 /// <summary>
-/// Two prefixes on <see cref="CargoDepotModule"/>, both gated to modules attached to a
+/// Two patches on <see cref="CargoDepotModule"/>, both gated to modules attached to a
 /// <see cref="LocalTerminal"/> (vanilla depots untouched):
 ///
 ///  - <c>IsForImport()</c> is contract-driven and always true without a contract; for terminal
@@ -17,6 +17,13 @@ namespace ShippingPP.Terminals;
 ///    the Import/Export labels in vanilla UI.
 ///  - <c>IsProductSupported()</c> restricts contract-less modules to world-minable products; for
 ///    terminal modules any product of the module's type (unit/loose/fluid) is allowed.
+///
+/// Both are POSTFIXES (at last priority) that overwrite the result, not prefixes: a
+/// bool-returning Harmony prefix is silently skipped when any other mod's prefix on the same
+/// method already returned false, so with a large mod set a prefix could be bypassed and the
+/// modules would quietly fall back to vanilla behavior (seen in a user report with 67 mods).
+/// Postfixes always run, even when the original was skipped; both originals are pure checks, so
+/// letting them (or a replacement) run first costs nothing.
 /// </summary>
 internal static class ModuleDirectionPatch
 {
@@ -45,10 +52,11 @@ internal static class ModuleDirectionPatch
         try
         {
             var harmony = new Harmony(HARMONY_ID);
-            harmony.Patch(isForImport, prefix: new HarmonyMethod(typeof(ModuleDirectionPatch),
-                nameof(IsForImportPrefix)));
-            harmony.Patch(isProductSupported, prefix: new HarmonyMethod(
-                typeof(ModuleDirectionPatch), nameof(IsProductSupportedPrefix)));
+            harmony.Patch(isForImport, postfix: new HarmonyMethod(typeof(ModuleDirectionPatch),
+                nameof(IsForImportPostfix)) { priority = Priority.Last });
+            harmony.Patch(isProductSupported, postfix: new HarmonyMethod(
+                typeof(ModuleDirectionPatch), nameof(IsProductSupportedPostfix))
+                { priority = Priority.Last });
             Log.Info("Shipping++: module direction patch applied.");
         }
         catch (Exception ex)
@@ -57,25 +65,23 @@ internal static class ModuleDirectionPatch
         }
     }
 
-    private static bool IsForImportPrefix(CargoDepotModule __instance, ref bool __result)
+    private static void IsForImportPostfix(CargoDepotModule __instance, ref bool __result)
     {
         if (!(__instance.Depot.ValueOrNull is LocalTerminal))
         {
-            return true;
+            return;
         }
         ShippingManager manager = ShippingManager.Current;
         __result = manager == null || !manager.IsExportModule(__instance);
-        return false;
     }
 
-    private static bool IsProductSupportedPrefix(CargoDepotModule __instance,
+    private static void IsProductSupportedPostfix(CargoDepotModule __instance,
         ProductProto product, ref bool __result)
     {
         if (!(__instance.Depot.ValueOrNull is LocalTerminal))
         {
-            return true;
+            return;
         }
         __result = product.Type.Matches(__instance.Prototype.ProductType);
-        return false;
     }
 }

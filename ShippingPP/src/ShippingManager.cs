@@ -935,11 +935,41 @@ public class ShippingManager
         stepBuilds();
         if (++m_tickCounter % SCAN_PERIOD_TICKS == 0)
         {
+            checkSimReplacementRuns();
             vacateVanillaShipSlots();
             completePendingFuelSwitches();
             updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
             pruneDestroyedShips();
             syncModuleDirections();
+        }
+    }
+
+    private bool m_simCheckDone;
+
+    /// <summary>
+    /// Support diagnostic (once per session): local terminals exist, their SimUpdate ticks —
+    /// but the mod's sim replacement never ran. That combination means another mod's Harmony
+    /// prefix on <c>CargoDepot.SimUpdate</c> skips ours, leaving the terminal behaving like a
+    /// vanilla depot; the log line names every patch owner so the conflict is identifiable
+    /// from a user's log alone.
+    /// </summary>
+    private void checkSimReplacementRuns()
+    {
+        if (m_simCheckDone || Terminals.TerminalPoolPatch.SimHasRun)
+        {
+            m_simCheckDone = true;
+            return;
+        }
+        // The prefix marks SimHasRun even for paused terminals, so any constructed live
+        // terminal that has not marked it is proof the prefix is being skipped.
+        foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
+        {
+            if (!terminal.IsDestroyed && terminal.IsConstructed)
+            {
+                m_simCheckDone = true;
+                Terminals.TerminalPoolPatch.LogSimUpdatePatchOwners();
+                return;
+            }
         }
     }
 
