@@ -587,8 +587,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             && ShippingManager.Current?.GetLineIdFor(m_ship) == null)
         {
             state = StateForUi.Danger;
-            return ("No home port — the home terminal was destroyed. Select a new home port "
-                + "in this window to put the ship back into service.").AsLoc();
+            return Txt.ShipStatus_Orphaned;
         }
         if (m_ship.HasJobs)
         {
@@ -598,20 +597,20 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         if (m_lowFuel)
         {
             state = StateForUi.Warning;
-            return "Not enough fuel for the next trip".AsLoc();
+            return Txt.ShipStatus_LowFuel;
         }
         state = StateForUi.Positive;
         if (m_ship.IsDocked && m_ship.DockedAt.ValueOrNull is CargoDepot dockedAt
             && isExchangeRunning(dockedAt))
         {
-            return "Transferring cargo".AsLoc();
+            return Txt.ShipStatus_TransferringCargo;
         }
         if (!m_ship.IsDocked && m_target is CargoDepot waitingFor)
         {
             int queueIndex = ShippingManager.Current?.GetQueueIndex(waitingFor, m_ship) ?? -1;
             if (queueIndex > 0)
             {
-                return $"Waiting for a free berth at {waitingFor.GetTitle()}".AsLoc();
+                return Txt.ShipStatus_WaitingForBerth(waitingFor.GetTitle());
             }
         }
         int? lineId = ShippingManager.Current?.GetLineIdFor(m_ship);
@@ -621,12 +620,11 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             if (line == null || !line.HasUsableStops)
             {
                 state = StateForUi.Warning;
-                return ("Assigned line has no usable route — add at least two terminal stops "
-                    + "to the line, or unassign the ship to resume automatic dispatch.").AsLoc();
+                return Txt.ShipStatus_LineUnusable;
             }
-            return $"On line \"{line.Name}\"".AsLoc();
+            return Txt.ShipStatus_OnLine(line.Name);
         }
-        return "Serving local terminals".AsLoc();
+        return Txt.ShipStatus_Idle;
     }
 
     public static void Serialize(LocalShipJobProvider value, BlobWriter writer)

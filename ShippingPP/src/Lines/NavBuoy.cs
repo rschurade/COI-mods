@@ -99,11 +99,13 @@ internal class NavBuoyData : IModData
         ProtosDb db = registrator.PrototypesDb;
 
         var id = new StaticEntityProto.ID(BUOY_PROTO_ID);
-        Proto.Str strings = Proto.CreateStr(id, "Navigation buoy",
-            "A route marker for shipping lines: add it as a stop in the shipping lines manager "
-            + "and line ships will sail past it on their way to the next stop — useful to route "
-            + "ships around islands or through wide channels. Ships aim near the buoy, not at "
-            + "it.");
+        Proto.Str strings = Proto.CreateStr(id,
+            ModTranslations.Text("ShippingPP__NavBuoy_Name", "Navigation buoy"),
+            ModTranslations.Text("ShippingPP__NavBuoy_Desc",
+                "A route marker for shipping lines: add it as a stop in the shipping lines "
+                + "manager and line ships will sail past it on their way to the next stop — "
+                + "useful to route ships around islands or through wide channels. Ships aim "
+                + "near the buoy, not at it."));
 
         // Toolbar: next to the local cargo terminal; unlocks with the same research.
         var terminal = db.Get<LocalTerminalProto>(

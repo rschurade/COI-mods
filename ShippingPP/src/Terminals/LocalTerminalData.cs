@@ -82,7 +82,9 @@ internal class LocalTerminalData : IModData
         // The "ship has no home port" warning, raised for ships whose home terminal was
         // destroyed (they can't take jobs or refuel until re-homed via the ship window).
         new Mafi.Core.Notifications.NotificationProtoBuilder(registrator)
-            .Start("Cargo ship has no home port", ShippingManager.ShipHasNoHomeNotifId)
+            .Start(ModTranslations.Text("ShippingPP__Notif_ShipHasNoHomePort",
+                    "Cargo ship has no home port"),
+                ShippingManager.ShipHasNoHomeNotifId)
             .SetType(Mafi.Core.Notifications.NotificationType.Continuous)
             .SetStyle(Mafi.Core.Notifications.NotificationStyle.Critical)
             .AddIcon("Assets/Unity/UserInterface/Toolbar/CargoShip.svg")
@@ -105,14 +107,17 @@ internal class LocalTerminalData : IModData
         // T1 keeps the id the mod has used since its first release (save compatibility).
         var id = new CargoDepotProto.ID($"ShippingPP_LocalTerminalT{tier}");
         int slots = donor.ModuleSlots.Length;
+        // One translatable pattern for all four tiers; the slot count is filled in per tier.
         Proto.Str strings = Proto.CreateStr((StaticEntityProto.ID)id,
-            $"Local cargo terminal ({slots})",
-            $"A cargo terminal with {slots} module slots for local shipping: its ships carry "
-            + "products to and from other local cargo terminals on this island instead of trading "
-            + "with the world. Terminal modules set to export offer their product to the network; "
-            + "modules set to import request it. Ships are built on site from delivered materials "
-            + $"and match the terminal's size ({slots} cargo modules); any local ship can dock "
-            + "here regardless of its size.");
+            ModTranslations.Fmt(ModTranslations.Text("ShippingPP__LocalTerminal_Name_Fmt",
+                "Local cargo terminal ({0})"), slots).Value,
+            ModTranslations.Fmt(ModTranslations.Text("ShippingPP__LocalTerminal_Desc_Fmt",
+                "A cargo terminal with {0} module slots for local shipping: its ships carry "
+                + "products to and from other local cargo terminals on this island instead of "
+                + "trading with the world. Terminal modules set to export offer their product to "
+                + "the network; modules set to import request it. Ships are built on site from "
+                + "delivered materials and match the terminal's size ({0} cargo modules); any "
+                + "local ship can dock here regardless of its size."), slots).Value);
 
         // Toolbar: same category as the cargo depots, each tier ordered right after its donor.
         ImmutableArray<ToolbarEntryData> categories;

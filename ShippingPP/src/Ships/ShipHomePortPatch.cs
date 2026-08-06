@@ -57,7 +57,7 @@ internal static class ShipHomePortPatch
     {
         CargoShipInspector inspector = __instance;
         var homeLabel = new Label();
-        var selectBtn = new ButtonText("Select home port".AsLoc(), delegate
+        var selectBtn = new ButtonText(Txt.Ship_SelectHomePort, delegate
         {
             CargoShipV2 ship = inspector.Entity;
             if (ship != null && ShippingManager.IsLocalShip(ship))
@@ -74,11 +74,7 @@ internal static class ShipHomePortPatch
             homeLabel,
             selectBtn
         });
-        panel.Title("Home port".AsLoc(), ("The terminal this ship belongs to: the ship's cargo "
-            + "modules mirror the home terminal's modules, network trips deliver to and fetch "
-            + "for the home terminal, and the ship refuels there. Use the button to pick a new "
-            + "home terminal on the map. Note that cargo in ship modules that do not match the "
-            + "new home's module layout is lost when re-homing.").AsLoc());
+        panel.Title(Txt.Ship_HomePort_Title, Txt.Ship_HomePort_Tooltip);
 
         inspector.Observe(() => inspector.Entity != null
                 && ShippingManager.IsLocalShip(inspector.Entity))
@@ -99,7 +95,7 @@ internal static class ShipHomePortPatch
         {
             bool orphaned = title == "!";
             ((IComponentWithText)homeLabel).SetValue(
-                (orphaned ? "None — the home terminal was destroyed!" : title).AsLoc());
+                orphaned ? Txt.Ship_NoHomePort : title.AsLoc());
             homeLabel.Color(orphaned ? ColorRgba.Red : (ColorRgba?)null);
         });
     }

@@ -36,7 +36,10 @@ public sealed class ShippingLine
     public ShippingLine(int id)
     {
         Id = id;
-        Name = $"Line {id}";
+        // The vanilla default train line name ("Line {0}"), so a new line is named in the
+        // player's language. Renaming replaces it; the name is stored as plain text from then
+        // on (as in vanilla, where a renamed line also keeps its literal name).
+        Name = Mafi.Core.Tr.Train_Line.Format(id.ToString()).Value;
         Color = DefaultColorFor(id);
         m_stops = new Lyst<StaticEntity>();
     }

@@ -30,6 +30,10 @@ public sealed class ShippingPPMod : IMod
     {
         Manifest = manifest;
         JsonConfig = new ModJsonConfig(this);
+
+        // Before anything builds a string: the mod's own translations for the player's
+        // language (proto names are created during proto registration, right after this).
+        ModTranslations.Initialize(manifest);
     }
 
     public void RegisterPrototypes(ProtoRegistrator registrator)
@@ -143,6 +147,10 @@ public sealed class ShippingPPMod : IMod
         {
             Log.Error($"Shipping++: failed to apply buoy placement patch: {ex.Message}");
         }
+
+        // Writes the English source of every mod string for translators — only when the mod
+        // folder's Translations directory holds the EXPORT_TEMPLATE flag file.
+        ModTranslations.TryExportTemplate();
     }
 
     public void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) { }

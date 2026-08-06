@@ -80,7 +80,7 @@ public class ShippingLinesManagerWindow : Window
     public ShippingLinesManagerWindow(Controller controller, UiContext context,
         ShippingManager manager, EntitiesManager entitiesManager,
         CameraController cameraController)
-        : base("Shipping lines".AsLoc())
+        : base(Txt.LinesManager_Title)
     {
         m_controller = controller;
         m_manager = manager;
@@ -96,8 +96,7 @@ public class ShippingLinesManagerWindow : Window
         // line deletion in this footer, not in the detail panel).
         m_linesColumn = new Column(0.pt());
         m_deleteLineBtn = new ButtonIcon(ICON_TRASH)
-            .Tooltip(("Delete the selected line. Assigned ships return to automatic "
-                + "dispatch.").AsLoc())
+            .Tooltip(Txt.LinesManager_DeleteLine_Tooltip)
             .OnClick((Action)delegate
             {
                 if (m_selectedLineId >= 0)
@@ -107,8 +106,8 @@ public class ShippingLinesManagerWindow : Window
                     m_selectedLineId = -1;
                 }
             }, allowKeyPresses: false);
-        var newLineBtn = new ButtonIconText(Button.General, ICON_PLUS, "Line".AsLoc())
-            .Tooltip("Create a new shipping line.".AsLoc())
+        var newLineBtn = new ButtonIconText(Button.General, ICON_PLUS, Tr.TrainLine_NewLineButton)
+            .Tooltip(Txt.LinesManager_NewLine_Tooltip)
             .OnClick((Action)createNewLine, allowKeyPresses: false);
         // The vanilla trains manager's left side verbatim: a PanelWithHeader holding the
         // scrollable lines list and a footer with delete (left) and create (right).
@@ -118,7 +117,7 @@ public class ShippingLinesManagerWindow : Window
             {
                 c.FlexBasis(35.Percent()).AlignItemsStretch().FlexGrow(1f);
             },
-            new PanelWithHeader("Shipping lines".AsLoc())
+            new PanelWithHeader(Txt.LinesManager_Title)
             {
                 (Action<PanelWithHeader>)delegate(PanelWithHeader c)
                 {
@@ -163,7 +162,7 @@ public class ShippingLinesManagerWindow : Window
             (TrainLineColor option, int idx, bool inDropdown) =>
                 new Row { new ColorSplit(option.Primary, option.Secondary) })
             .SetOptions(TrainLine.COLOR_PALETTE);
-        lineColorDropdown.Tooltip("Line color".AsLoc());
+        lineColorDropdown.Tooltip(Txt.LinesManager_LineColor_Tooltip);
         lineColorDropdown.OnValueChanged(delegate(TrainLineColor _, int index)
         {
             if (m_selectedLineId >= 0)
@@ -185,15 +184,12 @@ public class ShippingLinesManagerWindow : Window
         // button (map picking) and the line warning.
         m_stopsColumn = new Column(2.pt()).FlexGrow(1f).AlignSelfStretch();
         m_lineDiagram = new VerticalSingleTrainLineDiagramUi.Line();
-        m_noStopsLabel = new Label(
-            "No stops yet — add local terminals and navigation buoys.".AsLoc()).FontItalic();
+        m_noStopsLabel = new Label(Txt.LinesManager_NoStops).FontItalic();
         m_lineWarning = new WarningLabel().MaxWidth(Percent.Eighty)
             .Padding(leftRight: 2.pt(), topBottom: 6)
             .Background(ColorRgba.Black.SetA(100)).BorderRadius(7);
-        var addStopBtn = new ButtonIconText(Button.Primary, ICON_PLUS, "Add stop".AsLoc())
-            .Tooltip(("Pick stops directly on the map: click a local terminal or a navigation "
-                + "buoy to append it to the line. Hold shift to add several stops in a row; "
-                + "right-click or Escape to finish.").AsLoc())
+        var addStopBtn = new ButtonIconText(Button.Primary, ICON_PLUS, Tr.TrainLine_AddStop)
+            .Tooltip(Txt.LinesManager_AddStop_Tooltip)
             .OnClick((Action)delegate
             {
                 if (m_selectedLineId >= 0)
@@ -286,8 +282,8 @@ public class ShippingLinesManagerWindow : Window
         };
 
         var tabs = new TabContainer();
-        tabs.Add("Stops".AsLoc(), stopsTab, Scroll.No);
-        tabs.Add("Ships".AsLoc(), shipsTab, Scroll.No);
+        tabs.Add(Txt.LinesManager_StopsTab, stopsTab, Scroll.No);
+        tabs.Add(Txt.LinesManager_ShipsTab, shipsTab, Scroll.No);
         tabs.FlexGrow(1f);
 
         m_detailsPanel = new Column(2.pt())
@@ -311,8 +307,7 @@ public class ShippingLinesManagerWindow : Window
         };
         // Right side like vanilla: a plain Panel with a centered hint when nothing is
         // selected, the details column otherwise.
-        m_noLinesPanel = new Panel().BodyAdd(new Label(
-            "No line selected. Create a line and add terminal stops.".AsLoc())
+        m_noLinesPanel = new Panel().BodyAdd(new Label(Txt.LinesManager_NoLineSelected)
             .AlignSelfCenter().PaddingTop(4.pt()));
         var right = new Column(1.pt())
         {
@@ -372,11 +367,11 @@ public class ShippingLinesManagerWindow : Window
         return null;
     }
 
-    private string titleOfStop(Mafi.Core.Entities.Static.StaticEntity stop)
+    private LocStrFormatted titleOfStop(Mafi.Core.Entities.Static.StaticEntity stop)
     {
         return stop.Prototype is NavBuoyProto
-            ? $"[buoy] {stop.GetTitle()}"
-            : stop.GetTitle();
+            ? Txt.BuoyStop(stop.GetTitle())
+            : stop.GetTitle().AsLoc();
     }
 
     private string computeStateHash()
@@ -549,11 +544,7 @@ public class ShippingLinesManagerWindow : Window
         m_lineDiagram.Visible(selected.StopCount > 0);
         m_lineDiagram.Colors(selected.Color.Primary, selected.Color.Secondary);
         m_lineWarning.Visible(!selected.HasUsableStops);
-        m_lineWarning.Values(
-            "A line needs at least two local terminal stops.".AsLoc(),
-            ("Ships sail the stops in order and only exchange cargo at local terminals; "
-                + "buoys are waypoints. With fewer than two terminals the line's ships have "
-                + "no route to sail.").AsLoc());
+        m_lineWarning.Values(Txt.LinesManager_NoRoute, Txt.LinesManager_NoRoute_Tooltip);
         for (int i = 0; i < selected.StopCount; i++)
         {
             Mafi.Core.Entities.Static.StaticEntity stop = selected.StopAtOrNull(i);
@@ -564,13 +555,13 @@ public class ShippingLinesManagerWindow : Window
             Mafi.Core.Entities.Static.StaticEntity captured = stop;
             int capturedIndex = i;
             var focusBtn = new ButtonIcon(Button.IconOnly, ICON_FOCUS)
-                .Tooltip("Show on the map".AsLoc())
+                .Tooltip(Tr.MapResources_ShowPins)
                 .OnClick((Action)delegate
                 {
                     m_cameraController.PanTo(captured.Position2f);
                 }, allowKeyPresses: false);
             var removeBtn = new ButtonIcon(Button.IconOnlyDanger, ICON_TRASH)
-                .Tooltip("Remove this stop from the line".AsLoc())
+                .Tooltip(Txt.LinesManager_RemoveStop_Tooltip)
                 .OnClick((Action)delegate
                 {
                     m_inputScheduler.ScheduleInputCmd(new ModifyLineCmd(
@@ -583,7 +574,7 @@ public class ShippingLinesManagerWindow : Window
             var dragHandle = new Column().Class(Cls.dragHandle).AlignSelfStretch();
             // Terminal stops get a strip of their module product icons with live fill rates
             // under the title; buoys (and destroyed stops) show just the title.
-            UiComponent stopInfo = new Label(titleOfStop(stop).AsLoc()).FontBold();
+            UiComponent stopInfo = new Label(titleOfStop(stop)).FontBold();
             if (stop is CargoDepot depotStop && !depotStop.IsDestroyed)
             {
                 UiComponent strip = buildModuleStrip(depotStop);
@@ -682,17 +673,18 @@ public class ShippingLinesManagerWindow : Window
                 }
                 CargoShipV2 capturedShip = ship;
                 string home = ship.AssignedDepot.ValueOrNull?.GetTitle() ?? "-";
-                string assignment = lineId.HasValue
-                    ? (onThisLine ? "on this line" : $"on line {lineId.Value}")
-                    : "automatic dispatch";
+                LocStrFormatted assignment = lineId.HasValue
+                    ? (onThisLine
+                        ? Txt.LinesManager_ShipOnThisLine : Txt.ShipOnLine(lineId.Value))
+                    : Txt.LinesManager_ShipAutoDispatch;
                 var focusShipBtn = new ButtonIcon(Button.IconOnly, ICON_FOCUS)
-                    .Tooltip("Show on the map".AsLoc())
+                    .Tooltip(Tr.MapResources_ShowPins)
                     .OnClick((Action)delegate
                     {
                         m_cameraController.PanTo(capturedShip.Position2f);
                     }, allowKeyPresses: false);
                 var actionBtn = new ButtonText(
-                    (onThisLine ? "Unassign" : "Assign").AsLoc(), delegate
+                    onThisLine ? Tr.Unassign : Tr.Assign, delegate
                     {
                         m_inputScheduler.ScheduleInputCmd(new ModifyLineCmd(onThisLine
                             ? ModifyLineCmd.ACTION_UNASSIGN_SHIP
@@ -713,7 +705,7 @@ public class ShippingLinesManagerWindow : Window
                         new Column(1.pt())
                         {
                             new Label(ship.GetTitle().AsLoc()).FontBold(),
-                            new Label($"Home: {home} — {assignment}".AsLoc())
+                            new Label(Txt.ShipHome(home, assignment))
                                 .Color(Theme.InactiveColor)
                         }
                     },
@@ -773,10 +765,11 @@ public class ShippingLinesManagerWindow : Window
                     ? capturedModule.CurrentQuantity.Value * 100 / capturedModule.Capacity.Value
                     : 0;
                 ((IComponentWithText)fillLabel).SetValue($"{pct}%".AsLoc());
-                cell.Tooltip(($"{productName}: {capturedModule.CurrentQuantity.Value} / "
-                    + $"{capturedModule.Capacity.Value} stored — this module "
+                cell.Tooltip(Txt.ModuleFill(productName, capturedModule.CurrentQuantity.Value,
+                        capturedModule.Capacity.Value)
+                    + " ".AsLoc()
                     + (m_manager.IsExportModule(capturedModule)
-                        ? "offers (export)." : "requests (import).")).AsLoc());
+                        ? Txt.LinesManager_ModuleOffers : Txt.LinesManager_ModuleRequests));
             });
             if (strip == null)
             {
@@ -858,7 +851,7 @@ public class ShippingLinesManagerWindow : Window
             m_entitiesRenderer = entitiesRenderer;
             m_shippingManager = shippingManager;
             m_selectCursor = cursorManager.RegisterCursor(CursorsStyles.InspectorHover);
-            toolbar.AddMainMenuButton("Shipping lines".AsLoc(), this,
+            toolbar.AddMainMenuButton(Txt.LinesManager_Title, this,
                 "Assets/Unity/UserInterface/Toolbar/CargoShip.svg", 221f, null);
             Current = this;
         }
@@ -1022,13 +1015,11 @@ public class ShippingLinesManagerWindow : Window
             updateHoverHighlight(entity.ValueOrNull);
             if (entity.HasValue)
             {
-                m_cursorMessage.MessageInfo(
-                    $"Add \"{entity.Value.GetTitle()}\" to the line".AsLoc());
+                m_cursorMessage.MessageInfo(Txt.AddStopToLine(entity.Value.GetTitle()));
             }
             else
             {
-                m_cursorMessage.MessageInfo(("Click a local terminal or a navigation buoy to "
-                    + "add it as a stop (shift: add multiple, right-click: finish)").AsLoc());
+                m_cursorMessage.MessageInfo(Txt.LinesManager_PickStopHint);
             }
             if (m_shortcutsManager.IsPrimaryActionDown && entity.HasValue)
             {
@@ -1072,13 +1063,11 @@ public class ShippingLinesManagerWindow : Window
             updateHoverHighlight(terminal.ValueOrNull);
             if (terminal.HasValue)
             {
-                m_cursorMessage.MessageInfo(
-                    $"Make \"{terminal.Value.GetTitle()}\" the ship's home port".AsLoc());
+                m_cursorMessage.MessageInfo(Txt.MakeHomePort(terminal.Value.GetTitle()));
             }
             else
             {
-                m_cursorMessage.MessageInfo(("Click a local terminal to make it this ship's "
-                    + "new home port (right-click: cancel)").AsLoc());
+                m_cursorMessage.MessageInfo(Txt.LinesManager_PickHomeHint);
             }
             if (m_shortcutsManager.IsPrimaryActionDown && terminal.HasValue)
             {

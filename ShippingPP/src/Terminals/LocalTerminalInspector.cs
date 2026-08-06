@@ -62,7 +62,7 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
 
         // --- Ship panel: build button + construction progress. ---
         ButtonIconText buildBtn = new ButtonIconText(Button.Primary,
-            "Assets/Unity/UserInterface/General/Build.svg", "Build ship".AsLoc())
+            "Assets/Unity/UserInterface/General/Build.svg", Txt.Terminal_BuildShip)
             .NoShrink().AlignSelfCenter()
             .OnClick((System.Action)delegate
             {
@@ -75,15 +75,17 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             string costText = "";
             foreach (ProductQuantity pq in ShippingManager.GetShipBuildCost(Entity).Products)
             {
-                costText += (costText.Length == 0 ? "" : ", ")
-                    + $"{pq.Quantity.Value}x {pq.Product.Strings.Name.TranslatedString}";
+                costText += (costText.Length == 0 ? "" : ", ") + Txt.ProductQuantity(
+                    pq.Quantity.Value, pq.Product.Strings.Name.TranslatedString).Value;
             }
             int modules = proto.CargoShipProto != null
                 ? proto.CargoShipProto.MaximumModulesCount : 2;
-            buildBtn.Tooltip(($"Builds a cargo ship ({modules} modules) on site: the "
-                + "construction materials are requested from truck logistics, and the ship "
-                + "enters service at this terminal once everything is delivered."
-                + (costText.Length == 0 ? "" : $" Requires: {costText}.")).AsLoc());
+            LocStrFormatted tooltip = Txt.BuildShipTooltip(modules);
+            if (costText.Length != 0)
+            {
+                tooltip = tooltip + " ".AsLoc() + Txt.BuildShipRequires(costText);
+            }
+            buildBtn.Tooltip(tooltip);
         });
 
         var constrUi = new ConstructionUi();
@@ -93,16 +95,11 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
         {
             fleetLabel,
             buildBtn
-        }).Title("Cargo ships".AsLoc(), ("Ships built on site from delivered materials, homed "
-            + "at this terminal. Build as many as you like — arrivals queue up and hold at "
-            + "anchor while the dock serves one ship at a time. A ship's cargo modules mirror "
-            + "this terminal's modules, so at least one module must be built before a ship can "
-            + "be laid down; ships gain the remaining modules automatically as more are built "
-            + "on the terminal.").AsLoc());
+        }).Title(Tr.StatsCat__CargoShips, Txt.Terminal_Ships_Tooltip);
         this.Observe(() => m_shippingManager.CountShipsHomedAt(Entity))
             .Do(delegate(int count)
             {
-                ((IComponentWithText)fleetLabel).SetValue($"Ships: {count}".AsLoc());
+                ((IComponentWithText)fleetLabel).SetValue(Txt.ShipsCount(count));
             });
         AddPanel(delegate(Column c)
         {
@@ -147,7 +144,7 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
                 }
                 else
                 {
-                    constrUi.As(percent, "Building ship".AsLoc(), DisplayState.Positive);
+                    constrUi.As(percent, Txt.Terminal_BuildingShip, DisplayState.Positive);
                 }
                 constrUi.SetProgress(percent, isDeconstruction: false);
             });
@@ -160,11 +157,8 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             int i = slotIndex;
             var slotIcon = new Icon().Large().MarginTop(2.pt());
             var slotToggle = new Mafi.Unity.UiToolkit.Library.Toggle(standalone: true)
-                .Label("Offer (export)".AsLoc())
-                .Tooltip(("On: this module OFFERS its product to the shipping network — trucks "
-                    + "fill it from your factory and docked ships are loaded from it. Off: this "
-                    + "module REQUESTS its product — docked ships are unloaded into it and "
-                    + "trucks distribute the goods to your factory.").AsLoc());
+                .Label(Txt.Terminal_ModuleExport)
+                .Tooltip(Txt.Terminal_ModuleExport_Tooltip);
             slotToggle.OnValueChanged(delegate
             {
                 CargoDepotModule module = moduleAt(i);
@@ -182,9 +176,7 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             var thresholdDropdown = new Dropdown<int>(
                 (int opt, int idx, bool inDropdown) => new Label($"{opt} %".AsLoc()))
                 .SetOptions(new[] { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 });
-            thresholdDropdown.Tooltip(("Network threshold: an import module requests cargo only "
-                + "while filled below this, an export module offers only while filled above "
-                + "(100 % minus this). 100 % = always active.").AsLoc());
+            thresholdDropdown.Tooltip(Txt.Terminal_Threshold_Tooltip);
             thresholdDropdown.OnValueChanged(delegate(int value, int _)
             {
                 CargoDepotModule module = moduleAt(i);
@@ -219,9 +211,8 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
                 }
             });
         }
-        AddPanelWithHeader(slotsColumn).Title("Shipping".AsLoc(),
-            ("Direction of each terminal module. Assign a product in the module's own window "
-            + "first; any product of the module's type can be shipped.").AsLoc());
+        AddPanelWithHeader(slotsColumn).Title(Txt.Terminal_Shipping_Title,
+            Txt.Terminal_Shipping_Tooltip);
 
         // --- Ship fuel panel (same as the vanilla depot window). ---
         var buffer = new BufferWithSlider(addPendingBars: true);

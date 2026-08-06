@@ -184,6 +184,11 @@
 
 	<!-- Deploy to mods folder on build -->
 	<Target Name="DeployToModsFolder" AfterTargets="Build" Condition=" '$(DeployToModsFolder)' == 'true' AND '$(ProjectDir)' != '*Undefined*' ">
+		<ItemGroup>
+			<!-- Mod translations (and their readme); the mod reads them from this folder at runtime. -->
+			<TranslationFiles Include="$(ProjectDir)Translations\*" Exclude="$(ProjectDir)Translations\EXPORT_TEMPLATE" />
+		</ItemGroup>
+		<Copy SourceFiles="@(TranslationFiles)" DestinationFolder="$(COI_MODS)\$(TargetName)\Translations\" Condition="'@(TranslationFiles)' != ''" />
 		<Copy SourceFiles="$(ProjectDir)\manifest.json" DestinationFolder="$(COI_MODS)\$(TargetName)\" />
 		<Copy SourceFiles="$(ProjectDir)\config.json" DestinationFolder="$(COI_MODS)\$(TargetName)\" Condition="Exists('$(ProjectDir)\config.json')" />
 		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(COI_MODS)\$(TargetName)\" />
