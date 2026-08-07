@@ -468,9 +468,24 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             }
             else if (dockedAt == null)
             {
-                // Dry tank at sea: give the berth back and run home for fuel.
-                manager.ReleaseDockClaim(m_ship);
-                sailHomeToRefuel(manager);
+                // Dry tank at sea. The emergency refuel run is free of charge, so when the
+                // berth just granted IS the home berth, sail in and refuel there instead of
+                // giving the claim back: releasing it re-queues the ship at the BACK of its own
+                // home queue, and with a whole fleet dry every ship in turn would be granted the
+                // berth, forfeit it and drop to the tail — a livelock in which the dock stays
+                // empty and nobody ever reaches the fuel.
+                if (m_ship.AssignedDepot.ValueOrNull == terminal)
+                {
+                    m_target = terminal;
+                    m_idleTicks = 0;
+                    m_lineStopIndex++;
+                    m_ship.NavigateToDock(terminal);
+                }
+                else
+                {
+                    manager.ReleaseDockClaim(m_ship);
+                    sailHomeToRefuel(manager);
+                }
             }
             return;
         }
