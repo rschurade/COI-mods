@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using Mafi;
 using Mafi.Collections.ImmutableCollections;
 using Mafi.Core.Buildings;
 using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
+using Mafi.Core.Buildings.Cargo.Ships.Modules;
 using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static;
 using Mafi.Core.PathFinding;
@@ -21,12 +22,12 @@ namespace ShippingPP.Ships;
 ///
 /// The cargo exchange itself is automatic — whenever a local ship is docked, the terminal's
 /// modules load/unload every product both sides agree on (module direction × matching ship
-/// module, see <see cref="LocalTerminalSim"/>). So this provider's whole job is routing: wait at
-/// a dock until the cranes go idle, then — when at home — ask the dispatcher for the most
-/// valuable terminal to visit (deliver what the ship carries, fetch what home requests), sail
-/// there, let the exchange run, and sail home. Each trade departure costs half a vanilla fuel
-/// journey; with insufficient fuel the ship stays docked (terminals refuel docked ships from
-/// their fuel buffer).
+/// module, see <see cref="LocalTerminalSim"/>). So this provider's whole job is routing: sail the
+/// stops of the ship's assigned line in order, and at each one wait until the cranes go idle AND
+/// the stop's departure rule is satisfied (see <see cref="Lines.StopRule"/>). A ship with no line
+/// has no work — there is no automatic dispatch — and idles at its home anchor. Each departure
+/// costs half a vanilla fuel journey; with insufficient fuel the ship stays docked (terminals
+/// refuel docked ships from their fuel buffer).
 ///
 /// Docks serve one ship at a time through the manager's per-dock queue: a ship may only
 /// <c>NavigateToDock</c> when <see cref="ShippingManager.TryReserveDock"/> grants it the berth;
@@ -38,10 +39,12 @@ namespace ShippingPP.Ships;
 public class LocalShipJobProvider : ICargoShipJobProvider
 {
     /// <summary>Version stamp of this provider's save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 5;
+    private const int SAVE_VERSION = 6;
 
     /// <summary>Ticks of crane inactivity before the ship considers the exchange finished.</summary>
     private const int IDLE_SETTLE_TICKS = 30;
+    /// <summary>Sim ticks per second, for turning a stop rule's timeout into ticks.</summary>
+    private const int TICKS_PER_SECOND = 10;
 
     /// <summary>How close (tiles) a ship aims at / must get to a buoy waypoint. Generous because
     /// buoys occupy their tile and ships have large pathfinding clearance boxes.</summary>
@@ -58,6 +61,9 @@ public class LocalShipJobProvider : ICargoShipJobProvider
     /// <summary>Current destination: a terminal (dock) or a navigation buoy (sail near).</summary>
     private StaticEntity m_target;
     private int m_idleTicks;
+    /// <summary>Ticks spent docked waiting for a stop's departure rule; drives its timeout.
+    /// </summary>
+    private int m_waitedTicks;
     private bool m_lowFuel;
     /// <summary>Index of the line stop the ship is heading for (line-assigned ships only).</summary>
     private int m_lineStopIndex;
@@ -259,9 +265,19 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
-        // Line mode: cycle the assigned line's stops; the network dispatcher is not consulted.
+        // Line mode: cycle the assigned line's stops.
         if (line != null)
         {
+            // The stop's departure rule may hold the ship here even though the cranes have gone
+            // idle — that idleness is exactly the "terminal is full / has nothing" case the rule
+            // exists for. The wait timer runs while docked and releases the ship regardless, so
+            // an unsatisfiable stop cannot strand it or block the berth behind it.
+            if (!mayDepartFrom(line, dockedAt))
+            {
+                m_waitedTicks++;
+                return;
+            }
+            m_waitedTicks = 0;
             stepAlongLine(line, dockedAt, manager);
             return;
         }
@@ -310,6 +326,68 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             m_idleTicks = 0;
             holdNear(dockedAt, manager);
         }
+    }
+
+    /// <summary>
+    /// Whether the stop the ship is docked at lets it go yet. The rule belongs to the line stop
+    /// the ship is serving: <see cref="m_lineStopIndex"/> already points at the NEXT stop, so the
+    /// current one is the entry before it, and any other occurrence of this terminal on the line
+    /// is a fallback for a ship that docked out of sequence.
+    /// </summary>
+    private bool mayDepartFrom(Lines.ShippingLine line, CargoDepot dockedAt)
+    {
+        int index = -1;
+        int previous = m_lineStopIndex - 1;
+        if (previous < 0)
+        {
+            previous = line.StopCount - 1;
+        }
+        if (line.StopAtOrNull(previous) == dockedAt)
+        {
+            index = previous;
+        }
+        else
+        {
+            for (int i = 0; i < line.StopCount; i++)
+            {
+                if (line.StopAtOrNull(i) == dockedAt)
+                {
+                    index = i;
+                    break;
+                }
+            }
+        }
+        if (index < 0)
+        {
+            return true; // Not a stop of this line: nothing to wait for.
+        }
+        Lines.StopRule rule = line.RuleAt(index);
+        if (!rule.HasWait)
+        {
+            return true;
+        }
+        if (rule.TimeoutSec > 0 && m_waitedTicks >= rule.TimeoutSec * TICKS_PER_SECOND)
+        {
+            return true;
+        }
+        return rule.IsSatisfiedAt(cargoPercent());
+    }
+
+    /// <summary>The ship's total cargo as a percentage of its total module capacity.</summary>
+    private int cargoPercent()
+    {
+        Quantity stored = Quantity.Zero;
+        Quantity capacity = Quantity.Zero;
+        for (int i = 0; i < m_ship.Modules.Count; i++)
+        {
+            CargoShipModule module = m_ship.Modules[i].ValueOrNull;
+            if (module != null)
+            {
+                stored += module.Quantity;
+                capacity += module.Capacity;
+            }
+        }
+        return capacity.IsPositive ? stored.Value * 100 / capacity.Value : 100;
     }
 
     private bool shipHasAnyCargo()
@@ -685,6 +763,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         writer.WriteBool(m_legFuelPaid);
         writer.WriteInt(m_anchorSlot);
         writer.WriteInt(m_anchorTerminalId);
+        writer.WriteInt(m_waitedTicks);
     }
 
     public static LocalShipJobProvider Deserialize(BlobReader reader)
@@ -734,5 +813,6 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             m_anchorSlot = -1;
             m_anchorTerminalId = 0;
         }
+        m_waitedTicks = version >= 6 ? reader.ReadInt() : 0;
     }
 }

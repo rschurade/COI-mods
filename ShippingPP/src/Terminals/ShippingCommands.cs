@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Mafi;
 using Mafi.Core;
 using Mafi.Core.Entities;
@@ -269,6 +269,75 @@ public class SellShipCmd : InputCommand
     }
 }
 
+/// <summary>Sets a line stop's departure rule (see <see cref="ShippingPP.Lines.StopRule"/>).
+/// </summary>
+public class SetStopRuleCmd : InputCommand
+{
+    public readonly int LineId;
+
+    public readonly int StopIndex;
+
+    /// <summary><see cref="ShippingPP.Lines.StopWait"/> as an int.</summary>
+    public readonly int Mode;
+
+    public readonly int Percent;
+
+    public readonly int TimeoutSec;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SetStopRuleCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SetStopRuleCmd)obj).DeserializeData(reader);
+
+    public SetStopRuleCmd(int lineId, int stopIndex, int mode, int percent, int timeoutSec)
+    {
+        LineId = lineId;
+        StopIndex = stopIndex;
+        Mode = mode;
+        Percent = percent;
+        TimeoutSec = timeoutSec;
+    }
+
+    public static void Serialize(SetStopRuleCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        writer.WriteInt(LineId);
+        writer.WriteInt(StopIndex);
+        writer.WriteInt(Mode);
+        writer.WriteInt(Percent);
+        writer.WriteInt(TimeoutSec);
+    }
+
+    public new static SetStopRuleCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SetStopRuleCmd obj,
+            (Func<BlobReader, Type, SetStopRuleCmd>)null,
+            (Func<BlobReader, string, SetStopRuleCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "LineId", reader.ReadInt());
+        reader.SetField(this, "StopIndex", reader.ReadInt());
+        reader.SetField(this, "Mode", reader.ReadInt());
+        reader.SetField(this, "Percent", reader.ReadInt());
+        reader.SetField(this, "TimeoutSec", reader.ReadInt());
+    }
+}
+
 /// <summary>Edits shipping lines: create/delete lines, add/remove stops, (un)assign ships.</summary>
 public class ModifyLineCmd : InputCommand
 {
@@ -364,6 +433,7 @@ internal class ShippingCommandsProcessor
       ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>,
       ICommandProcessor<SetShipHomeCmd>, IAction<SetShipHomeCmd>,
       ICommandProcessor<SellShipCmd>, IAction<SellShipCmd>,
+      ICommandProcessor<SetStopRuleCmd>, IAction<SetStopRuleCmd>,
       ICommandProcessor<ModifyLineCmd>, IAction<ModifyLineCmd>
 {
     private readonly EntitiesManager m_entitiesManager;
@@ -455,6 +525,23 @@ internal class ShippingCommandsProcessor
         if (error != null)
         {
             cmd.SetResultError(error);
+            return;
+        }
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SetStopRuleCmd>.Invoke(SetStopRuleCmd cmd)
+    {
+        ShippingPP.Lines.ShippingLine line = m_shippingManager.TryGetLine(cmd.LineId);
+        if (line == null)
+        {
+            cmd.SetResultError($"Line {cmd.LineId} not found.");
+            return;
+        }
+        if (!line.SetRuleAt(cmd.StopIndex, new ShippingPP.Lines.StopRule(
+            (ShippingPP.Lines.StopWait)cmd.Mode, cmd.Percent, cmd.TimeoutSec)))
+        {
+            cmd.SetResultError($"Line {cmd.LineId} has no stop {cmd.StopIndex}.");
             return;
         }
         cmd.SetResultSuccess();

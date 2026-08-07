@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Mafi;
 using Mafi.Collections;
 using Mafi.Core;
@@ -386,7 +386,10 @@ public class ShippingLinesManagerWindow : Window
                 .Append(line.StopCount).Append(';');
             for (int i = 0; i < line.StopCount; i++)
             {
-                sb.Append(line.StopAtOrNull(i)?.Id.Value ?? 0).Append(',');
+                StopRule rule = line.RuleAt(i);
+                sb.Append(line.StopAtOrNull(i)?.Id.Value ?? 0).Append('/')
+                    .Append((int)rule.Mode).Append('/').Append(rule.Percent).Append('/')
+                    .Append(rule.TimeoutSec).Append(',');
             }
         }
         sb.Append('|');
@@ -604,19 +607,23 @@ public class ShippingLinesManagerWindow : Window
             UiComponent stopInfo = new Label(titleOfStop(stop)).FontBold();
             if (stop is CargoDepot depotStop && !depotStop.IsDestroyed)
             {
+                var details = new Column(1.pt())
+                {
+                    (Action<Column>)delegate(Column c)
+                    {
+                        c.AlignItemsStart();
+                    },
+                    stopInfo
+                };
                 UiComponent strip = buildModuleStrip(depotStop);
                 if (strip != null)
                 {
-                    stopInfo = new Column(1.pt())
-                    {
-                        (Action<Column>)delegate(Column c)
-                        {
-                            c.AlignItemsStart();
-                        },
-                        stopInfo,
-                        strip
-                    };
+                    details.Add(strip);
                 }
+                // Only terminals exchange cargo, so only they have a departure rule; buoys are
+                // pure waypoints.
+                details.Add(buildStopRuleRow(selected, capturedIndex));
+                stopInfo = details;
             }
             var row = new Row
             {
@@ -757,6 +764,73 @@ public class ShippingLinesManagerWindow : Window
         {
             updater();
         }
+    }
+
+    /// <summary>
+    /// The stop's departure rule: a cycle button for the mode and, when the mode waits, click
+    /// targets for the cargo level and the timeout. Kept to one compact row so it fits under the
+    /// stop title next to the module strip.
+    /// </summary>
+    private UiComponent buildStopRuleRow(ShippingLine line, int stopIndex)
+    {
+        StopRule rule = line.RuleAt(stopIndex);
+        int lineId = line.Id;
+        var modeBtn = new ButtonText(Txt.StopRuleMode(rule.Mode), delegate
+        {
+            // Cycle None -> load to 100% -> unload to 0% -> None: the three settings that
+            // actually matter (leave when idle, fill up here, empty out here). The percentages
+            // are then adjusted with the level button.
+            StopRule current = line.RuleAt(stopIndex);
+            StopRule next;
+            switch (current.Mode)
+            {
+                case StopWait.None:
+                    next = new StopRule(StopWait.LoadTo, 100, current.TimeoutSec);
+                    break;
+                case StopWait.LoadTo:
+                    next = new StopRule(StopWait.UnloadTo, 0, current.TimeoutSec);
+                    break;
+                default:
+                    next = new StopRule(StopWait.None, 0, current.TimeoutSec);
+                    break;
+            }
+            sendStopRule(lineId, stopIndex, next);
+        }).Tooltip(Txt.StopRule_Tooltip);
+        var row = new Row(2.pt())
+        {
+            (Action<Row>)delegate(Row c)
+            {
+                c.AlignItemsCenter();
+            },
+            modeBtn
+        };
+        if (!rule.HasWait)
+        {
+            return row;
+        }
+        // Level in 25% steps and timeout in 30s steps: enough control for routing decisions
+        // without a slider in a row this size.
+        row.Add(new ButtonText(Txt.StopRulePercent(rule.Percent), delegate
+        {
+            StopRule current = line.RuleAt(stopIndex);
+            int percent = current.Percent + 25 > 100 ? 0 : current.Percent + 25;
+            sendStopRule(lineId, stopIndex,
+                new StopRule(current.Mode, percent, current.TimeoutSec));
+        }).Tooltip(Txt.StopRulePercent_Tooltip));
+        row.Add(new ButtonText(Txt.StopRuleTimeout(rule.TimeoutSec), delegate
+        {
+            StopRule current = line.RuleAt(stopIndex);
+            int timeout = current.TimeoutSec >= 300 ? 0 : current.TimeoutSec + 30;
+            sendStopRule(lineId, stopIndex,
+                new StopRule(current.Mode, current.Percent, timeout));
+        }).Tooltip(Txt.StopRuleTimeout_Tooltip));
+        return row;
+    }
+
+    private void sendStopRule(int lineId, int stopIndex, StopRule rule)
+    {
+        m_inputScheduler.ScheduleInputCmd(new Terminals.SetStopRuleCmd(
+            lineId, stopIndex, (int)rule.Mode, rule.Percent, rule.TimeoutSec));
     }
 
     /// <summary>

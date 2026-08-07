@@ -124,6 +124,54 @@ internal static class Txt
     public static LocStrFormatted MakeHomePort(string title)
         => ModTranslations.Fmt(s_makeHomePort, title);
 
+    // Stop departure rules (see StopRule).
+    public static readonly LocStrFormatted StopRule_LeaveWhenIdle =
+        str("StopRule_LeaveWhenIdle", "Leave when done");
+
+    public static readonly LocStrFormatted StopRule_Tooltip = str("StopRule_Tooltip",
+        "When a ship may leave this stop. \"Leave when done\" departs as soon as the cranes stop "
+        + "— at a full import terminal that means leaving still laden, at an empty export "
+        + "terminal it means leaving empty. \"Load to\" and \"Unload to\" hold the ship until "
+        + "its cargo reaches the given share of its capacity. Click to cycle.");
+
+    public static readonly LocStrFormatted StopRulePercent_Tooltip =
+        str("StopRulePercent_Tooltip",
+            "Cargo level the ship waits for, as a share of its total capacity. Click to change.");
+
+    public static readonly LocStrFormatted StopRuleTimeout_Tooltip =
+        str("StopRuleTimeout_Tooltip",
+            "Leave anyway after this long, so a stop that never reaches the level cannot hold "
+            + "the ship — and the berth behind it — forever. Click to change; \"no limit\" waits "
+            + "indefinitely.");
+
+    public static readonly LocStrFormatted StopRule_LoadTo = str("StopRule_LoadTo", "Load to");
+    public static readonly LocStrFormatted StopRule_UnloadTo =
+        str("StopRule_UnloadTo", "Unload to");
+    private static readonly string s_stopRulePercent = text("StopRule_Percent_Fmt", "{0}%");
+    private static readonly string s_stopRuleTimeout = text("StopRule_Timeout_Fmt", "max {0}s");
+    public static readonly LocStrFormatted StopRule_NoTimeout =
+        str("StopRule_NoTimeout", "no limit");
+
+    /// <summary>Label of a stop's departure-mode button.</summary>
+    public static LocStrFormatted StopRuleMode(Lines.StopWait mode)
+    {
+        switch (mode)
+        {
+            case Lines.StopWait.LoadTo:
+                return StopRule_LoadTo;
+            case Lines.StopWait.UnloadTo:
+                return StopRule_UnloadTo;
+            default:
+                return StopRule_LeaveWhenIdle;
+        }
+    }
+
+    public static LocStrFormatted StopRulePercent(int percent)
+        => ModTranslations.Fmt(s_stopRulePercent, percent);
+
+    public static LocStrFormatted StopRuleTimeout(int seconds)
+        => seconds <= 0 ? StopRule_NoTimeout : ModTranslations.Fmt(s_stopRuleTimeout, seconds);
+
     // --------------------------------------------------------------- Local terminal inspector.
     public static readonly LocStrFormatted Terminal_BuildShip =
         str("Terminal_BuildShip", "Build ship");
