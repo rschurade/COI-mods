@@ -541,9 +541,15 @@ internal class ShippingCommandsProcessor
         if (!line.SetRuleAt(cmd.StopIndex, new ShippingPP.Lines.StopRule(
             (ShippingPP.Lines.StopWait)cmd.Mode, cmd.Percent, cmd.TimeoutSec)))
         {
+            // Logged, not just returned as a command error: a rejected rule edit shows up in the
+            // UI as a button that does nothing, with no other trace.
+            Log.Warning($"Shipping++: cannot set a departure rule on stop {cmd.StopIndex} of "
+                + $"line {cmd.LineId} — the line has {line.StopCount} stops.");
             cmd.SetResultError($"Line {cmd.LineId} has no stop {cmd.StopIndex}.");
             return;
         }
+        Log.Info($"Shipping++: stop {cmd.StopIndex} of line {cmd.LineId} departs on "
+            + $"mode={cmd.Mode}, {cmd.Percent}%, timeout {cmd.TimeoutSec}s.");
         cmd.SetResultSuccess();
     }
 

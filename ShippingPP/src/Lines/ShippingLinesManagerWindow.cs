@@ -775,7 +775,7 @@ public class ShippingLinesManagerWindow : Window
     {
         StopRule rule = line.RuleAt(stopIndex);
         int lineId = line.Id;
-        var modeBtn = new ButtonText(Txt.StopRuleMode(rule.Mode), delegate
+        var modeBtn = new ButtonText(Txt.StopRuleMode(rule.Mode)).OnClick((Action)delegate
         {
             // Cycle None -> load to 100% -> unload to 0% -> None: the three settings that
             // actually matter (leave when idle, fill up here, empty out here). The percentages
@@ -795,7 +795,7 @@ public class ShippingLinesManagerWindow : Window
                     break;
             }
             sendStopRule(lineId, stopIndex, next);
-        }).Tooltip(Txt.StopRule_Tooltip);
+        }, allowKeyPresses: false).Tooltip(Txt.StopRule_Tooltip);
         var row = new Row(2.pt())
         {
             (Action<Row>)delegate(Row c)
@@ -810,20 +810,20 @@ public class ShippingLinesManagerWindow : Window
         }
         // Level in 25% steps and timeout in 30s steps: enough control for routing decisions
         // without a slider in a row this size.
-        row.Add(new ButtonText(Txt.StopRulePercent(rule.Percent), delegate
+        row.Add(new ButtonText(Txt.StopRulePercent(rule.Percent)).OnClick((Action)delegate
         {
             StopRule current = line.RuleAt(stopIndex);
             int percent = current.Percent + 25 > 100 ? 0 : current.Percent + 25;
             sendStopRule(lineId, stopIndex,
                 new StopRule(current.Mode, percent, current.TimeoutSec));
-        }).Tooltip(Txt.StopRulePercent_Tooltip));
-        row.Add(new ButtonText(Txt.StopRuleTimeout(rule.TimeoutSec), delegate
+        }, allowKeyPresses: false).Tooltip(Txt.StopRulePercent_Tooltip));
+        row.Add(new ButtonText(Txt.StopRuleTimeout(rule.TimeoutSec)).OnClick((Action)delegate
         {
             StopRule current = line.RuleAt(stopIndex);
             int timeout = current.TimeoutSec >= 300 ? 0 : current.TimeoutSec + 30;
             sendStopRule(lineId, stopIndex,
                 new StopRule(current.Mode, current.Percent, timeout));
-        }).Tooltip(Txt.StopRuleTimeout_Tooltip));
+        }, allowKeyPresses: false).Tooltip(Txt.StopRuleTimeout_Tooltip));
         return row;
     }
 

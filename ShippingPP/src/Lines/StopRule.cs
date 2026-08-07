@@ -1,4 +1,26 @@
+using Mafi.Core.Entities.Static;
+
 namespace ShippingPP.Lines;
+
+/// <summary>
+/// One stop of a shipping line: the terminal or buoy, and the rule for when a ship may leave it.
+///
+/// The rule lives on the stop rather than in a list parallel to the stops, so reordering and
+/// removal carry it along by construction — there is no second list to keep in step, and editing
+/// a rule cannot depend on how many stops the line has.
+/// </summary>
+internal sealed class LineStop
+{
+    internal readonly StaticEntity Entity;
+
+    internal StopRule Rule;
+
+    internal LineStop(StaticEntity entity, StopRule rule)
+    {
+        Entity = entity;
+        Rule = rule;
+    }
+}
 
 /// <summary>Which cargo level a ship waits for at a stop before it may depart.</summary>
 public enum StopWait : byte

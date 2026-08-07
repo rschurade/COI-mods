@@ -16,7 +16,7 @@ namespace ShippingPP.Lines;
 /// </summary>
 public sealed class ShippingLine
 {
-    private const int SAVE_VERSION = 4;
+    private const int SAVE_VERSION = 5;
 
     public int Id { get; private set; }
 
@@ -26,10 +26,10 @@ public sealed class ShippingLine
     /// palette and color UI components apply as-is.</summary>
     public TrainLineColor Color { get; set; }
 
-    private Lyst<StaticEntity> m_stops;
-    /// <summary>Departure rule per stop, index-parallel to <see cref="m_stops"/>. Every stop
-    /// mutation below keeps the two lists in lockstep.</summary>
-    private Lyst<StopRule> m_stopRules;
+    /// <summary>The stops, each carrying its own departure rule. One list, so reordering and
+    /// removal move a rule with its stop automatically and a rule can never end up attached to
+    /// the wrong stop.</summary>
+    private Lyst<LineStop> m_stops;
 
     private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
         (obj, writer) => ((ShippingLine)obj).SerializeData(writer);
@@ -44,8 +44,7 @@ public sealed class ShippingLine
         // on (as in vanilla, where a renamed line also keeps its literal name).
         Name = Mafi.Core.Tr.Train_Line.Format(id.ToString()).Value;
         Color = DefaultColorFor(id);
-        m_stops = new Lyst<StaticEntity>();
-        m_stopRules = new Lyst<StopRule>();
+        m_stops = new Lyst<LineStop>();
     }
 
     /// <summary>New lines cycle through the vanilla train-line palette by id.</summary>
@@ -58,29 +57,36 @@ public sealed class ShippingLine
 
     public StaticEntity StopAtOrNull(int index)
     {
-        return index >= 0 && index < m_stops.Count ? m_stops[index] : null;
+        return index >= 0 && index < m_stops.Count ? m_stops[index].Entity : null;
     }
 
     /// <summary>The stop's departure rule (see <see cref="StopRule"/>), or the default
     /// "leave when the transfer finishes" for an out-of-range index.</summary>
     public StopRule RuleAt(int index)
     {
-        return index >= 0 && index < m_stopRules.Count ? m_stopRules[index] : StopRule.Default;
+        return index >= 0 && index < m_stops.Count ? m_stops[index].Rule : StopRule.Default;
     }
 
     public bool SetRuleAt(int index, StopRule rule)
     {
-        if (index < 0 || index >= m_stopRules.Count)
+        if (index < 0 || index >= m_stops.Count)
         {
             return false;
         }
-        m_stopRules[index] = rule;
+        m_stops[index].Rule = rule;
         return true;
     }
 
     public bool ContainsStop(StaticEntity stop)
     {
-        return m_stops.Contains(stop);
+        for (int i = 0; i < m_stops.Count; i++)
+        {
+            if (m_stops[i].Entity == stop)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>A line needs at least two live TERMINAL stops for ships to cycle (buoys alone
@@ -90,9 +96,9 @@ public sealed class ShippingLine
         get
         {
             int liveTerminals = 0;
-            foreach (StaticEntity stop in m_stops)
+            foreach (LineStop stop in m_stops)
             {
-                if (!stop.IsDestroyed && stop is CargoDepot)
+                if (!stop.Entity.IsDestroyed && stop.Entity is CargoDepot)
                 {
                     liveTerminals++;
                 }
@@ -104,12 +110,11 @@ public sealed class ShippingLine
     /// <summary>Appends a stop (refused when identical to the current last stop).</summary>
     public bool AddStop(StaticEntity stop)
     {
-        if (m_stops.IsNotEmpty && m_stops.Last == stop)
+        if (m_stops.IsNotEmpty && m_stops.Last.Entity == stop)
         {
             return false;
         }
-        m_stops.Add(stop);
-        m_stopRules.Add(StopRule.Default);
+        m_stops.Add(new LineStop(stop, StopRule.Default));
         return true;
     }
 
@@ -121,12 +126,9 @@ public sealed class ShippingLine
         {
             return false;
         }
-        StaticEntity stop = m_stops[from];
-        StopRule rule = RuleAt(from);
+        LineStop stop = m_stops[from];
         m_stops.RemoveAt(from);
-        m_stopRules.RemoveAt(from);
         m_stops.Insert(to, stop);
-        m_stopRules.Insert(to, rule);
         return true;
     }
 
@@ -134,10 +136,9 @@ public sealed class ShippingLine
     /// list having shifted since the UI was built).</summary>
     public bool RemoveStopAt(int index, StaticEntity expected)
     {
-        if (index >= 0 && index < m_stops.Count && m_stops[index] == expected)
+        if (index >= 0 && index < m_stops.Count && m_stops[index].Entity == expected)
         {
             m_stops.RemoveAt(index);
-            m_stopRules.RemoveAt(index);
             return true;
         }
         return false;
@@ -148,10 +149,9 @@ public sealed class ShippingLine
     {
         for (int i = m_stops.Count - 1; i >= 0; i--)
         {
-            if (m_stops[i] == stop)
+            if (m_stops[i].Entity == stop)
             {
                 m_stops.RemoveAt(i);
-                m_stopRules.RemoveAt(i);
                 return true;
             }
         }
@@ -163,10 +163,9 @@ public sealed class ShippingLine
     {
         for (int i = m_stops.Count - 1; i >= 0; i--)
         {
-            if (m_stops[i].IsDestroyed)
+            if (m_stops[i].Entity.IsDestroyed)
             {
                 m_stops.RemoveAt(i);
-                m_stopRules.RemoveAt(i);
             }
         }
     }
@@ -185,13 +184,13 @@ public sealed class ShippingLine
         writer.WriteInt(Id);
         writer.WriteString(Name);
         TrainLineColor.Serialize(Color, writer);
-        Lyst<StaticEntity>.Serialize(m_stops, writer);
-        writer.WriteInt(m_stopRules.Count);
-        foreach (StopRule rule in m_stopRules)
+        writer.WriteInt(m_stops.Count);
+        foreach (LineStop stop in m_stops)
         {
-            writer.WriteInt((int)rule.Mode);
-            writer.WriteInt(rule.Percent);
-            writer.WriteInt(rule.TimeoutSec);
+            writer.WriteGeneric(stop.Entity);
+            writer.WriteInt((int)stop.Rule.Mode);
+            writer.WriteInt(stop.Rule.Percent);
+            writer.WriteInt(stop.Rule.TimeoutSec);
         }
     }
 
@@ -212,34 +211,47 @@ public sealed class ShippingLine
         Id = reader.ReadInt();
         Name = reader.ReadString();
         Color = version >= 3 ? TrainLineColor.Deserialize(reader) : DefaultColorFor(Id);
+        m_stops = new Lyst<LineStop>();
+        if (version >= 5)
+        {
+            int count = reader.ReadInt();
+            for (int i = 0; i < count; i++)
+            {
+                StaticEntity entity = reader.ReadGenericAs<StaticEntity>();
+                var rule = new StopRule((StopWait)reader.ReadInt(),
+                    reader.ReadInt(), reader.ReadInt());
+                m_stops.Add(new LineStop(entity, rule));
+            }
+            return;
+        }
         if (version >= 2)
         {
-            m_stops = Lyst<StaticEntity>.Deserialize(reader);
-            m_stopRules = new Lyst<StopRule>();
+            // v2..v4 stored the stops in one list and (from v4) the rules in a second,
+            // index-parallel one. Zip them back together; a stop with no stored rule keeps the
+            // default, which is how it behaved.
+            Lyst<StaticEntity> stops = Lyst<StaticEntity>.Deserialize(reader);
+            var rules = new Lyst<StopRule>();
             if (version >= 4)
             {
                 int ruleCount = reader.ReadInt();
                 for (int i = 0; i < ruleCount; i++)
                 {
-                    m_stopRules.Add(new StopRule((StopWait)reader.ReadInt(),
+                    rules.Add(new StopRule((StopWait)reader.ReadInt(),
                         reader.ReadInt(), reader.ReadInt()));
                 }
             }
-            // Older saves (and any mismatch) get the default rule, which is what they behaved as.
-            while (m_stopRules.Count < m_stops.Count)
+            for (int i = 0; i < stops.Count; i++)
             {
-                m_stopRules.Add(StopRule.Default);
+                m_stops.Add(new LineStop(stops[i],
+                    i < rules.Count ? rules[i] : StopRule.Default));
             }
             return;
         }
         // v1 stored the stops as Lyst<CargoDepot> (different wire format).
         Lyst<CargoDepot> old = Lyst<CargoDepot>.Deserialize(reader);
-        m_stops = new Lyst<StaticEntity>();
-        m_stopRules = new Lyst<StopRule>();
         foreach (CargoDepot stop in old)
         {
-            m_stops.Add(stop);
-            m_stopRules.Add(StopRule.Default);
+            m_stops.Add(new LineStop(stop, StopRule.Default));
         }
     }
 }
