@@ -16,6 +16,7 @@ using Mafi.Core.PropertiesDb;
 using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Simulation;
+using Mafi.Core.Terrain;
 using Mafi.Core.Utils;
 using Mafi.Core.Vehicles;
 using Mafi.Serialization;
@@ -1043,6 +1044,38 @@ public class ShippingManager
         return null;
     }
 
+    /// <summary>Margin (tiles) inside the map edge at which a departing sold ship counts as
+    /// gone.</summary>
+    private const int SALE_EDGE_MARGIN = 30;
+
+    /// <summary>
+    /// Whether a sold ship has finished leaving. <c>IsAtWorld</c> alone is not enough: vanilla
+    /// only sets it once the ship is a good distance BEYOND the map bounds, and a local ship —
+    /// which has a large pathfinding clearance box — often cannot path that far and simply stops
+    /// at the edge with its navigation job complete. Such a ship would sit there forever, so a
+    /// ship that has run out of navigation within the edge margin counts as gone too.
+    /// </summary>
+    internal static bool HasLeftTheMap(CargoShipV2 ship)
+    {
+        if (ship.IsAtWorld)
+        {
+            return true;
+        }
+        if (ship.IsDocked || ship.HasJobs || ship.IsNavigating)
+        {
+            return false;
+        }
+        TerrainManager terrain = ship.Context?.TerrainManager;
+        if (terrain == null)
+        {
+            return false;
+        }
+        Tile2i position = ship.Position2f.Tile2i;
+        return position.X <= SALE_EDGE_MARGIN || position.Y <= SALE_EDGE_MARGIN
+            || position.X >= terrain.TerrainWidth - SALE_EDGE_MARGIN
+            || position.Y >= terrain.TerrainHeight - SALE_EDGE_MARGIN;
+    }
+
     /// <summary>Removes sold ships once they have sailed off the map.</summary>
     private void removeSoldShips()
     {
@@ -1053,7 +1086,7 @@ public class ShippingManager
         Lyst<CargoShipV2> gone = null;
         foreach (CargoShipV2 ship in m_shipsForSale)
         {
-            if (ship.IsDestroyed || ship.IsAtWorld)
+            if (ship.IsDestroyed || HasLeftTheMap(ship))
             {
                 (gone = gone ?? new Lyst<CargoShipV2>()).Add(ship);
             }

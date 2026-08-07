@@ -137,7 +137,13 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         {
             m_target = null;
             manager.ReleaseDockClaim(m_ship);
-            m_ship.LeaveToWorld();
+            // Only re-issue the departure while the ship still has somewhere to go. A ship that
+            // has stopped at the map edge counts as gone and is removed by the manager's next
+            // scan; asking it to leave again every tick would just churn navigation jobs.
+            if (!ShippingManager.HasLeftTheMap(m_ship))
+            {
+                m_ship.LeaveToWorld();
+            }
             return;
         }
 
