@@ -247,15 +247,28 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             m_target = null;
         }
 
-        // Let the cranes finish (and settle) before any departure decision.
-        if (isExchangeRunning(dockedAt))
+        // "Depart now" from the ship window: the player overrules the stop's departure rule,
+        // the crane transfer and the settle delay, exactly as it overrules a world ship's
+        // wait-for-a-full-load. Consumed here because vanilla only clears the flag in
+        // DepartToWorldForCargo, which a local ship never calls.
+        bool departNow = m_ship.DepartureRequestedByPlayer;
+        if (departNow)
         {
-            m_idleTicks = 0;
-            return;
+            clearDepartureRequest();
         }
-        if (++m_idleTicks < IDLE_SETTLE_TICKS)
+
+        // Let the cranes finish (and settle) before any departure decision.
+        if (!departNow)
         {
-            return;
+            if (isExchangeRunning(dockedAt))
+            {
+                m_idleTicks = 0;
+                return;
+            }
+            if (++m_idleTicks < IDLE_SETTLE_TICKS)
+            {
+                return;
+            }
         }
 
         // Dry at the berth: hold it until this terminal fills the tank. Leaving is impossible
@@ -278,7 +291,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             // idle — that idleness is exactly the "terminal is full / has nothing" case the rule
             // exists for. The wait timer runs while docked and releases the ship regardless, so
             // an unsatisfiable stop cannot strand it or block the berth behind it.
-            if (!mayDepartFrom(line, dockedAt))
+            if (!departNow && !mayDepartFrom(line, dockedAt))
             {
                 m_waitedTicks++;
                 return;
@@ -678,10 +691,47 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         return true;
     }
 
+    /// <summary>
+    /// Whether the ship window's "depart now" button is offered. A docked local ship may always
+    /// be sent on its way early — that is the manual override for a stop rule that is waiting
+    /// for cargo which is not coming — provided it has a route to sail and the fuel to do it.
+    /// </summary>
     public bool IsDepartNowAvailable(out LocStrFormatted reason)
     {
+        reason = Mafi.Core.Tr.CargoShipCannotDepartNow__General.AsFormatted;
+        ShippingManager manager = ShippingManager.Current;
+        if (manager == null || !m_ship.IsDocked || manager.IsShipForSale(m_ship))
+        {
+            return false;
+        }
+        if (m_ship.DepartureRequestedByPlayer)
+        {
+            reason = Mafi.Core.Tr.CargoShipCannotDepartNow__WasRequested.AsFormatted;
+            return false;
+        }
+        int? lineId = manager.GetLineIdFor(m_ship);
+        Lines.ShippingLine line = lineId.HasValue ? manager.TryGetLine(lineId.Value) : null;
+        if (line == null || !line.HasUsableStops)
+        {
+            reason = Txt.ShipStatus_LineUnusable;
+            return false;
+        }
+        if (!canPayLegFuel())
+        {
+            reason = Txt.ShipStatus_LowFuel;
+            return false;
+        }
         reason = LocStrFormatted.Empty;
-        return false;
+        return true;
+    }
+
+    /// <summary>Consumes the player's departure request. The flag has a private setter and
+    /// vanilla only clears it when a ship leaves for the world map, which a local ship never
+    /// does — left set, it would make the button read "Already requested" forever.</summary>
+    private void clearDepartureRequest()
+    {
+        ProtoUtils.SetField(typeof(CargoShipV2), m_ship,
+            "<DepartureRequestedByPlayer>k__BackingField", false);
     }
 
     public bool CanDepart(out LocStrFormatted reason)
