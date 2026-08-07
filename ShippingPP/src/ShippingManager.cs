@@ -961,39 +961,6 @@ public class ShippingManager
         return new AssetValue(products.ToImmutableArray());
     }
 
-    /// <summary>How much of <see cref="GetShipRefund"/> the home terminal's modules can actually
-    /// take: a module only accepts the product it is set to carry, so a terminal shipping ore has
-    /// nowhere to put the ship's steel. Used by the sell confirmation so the loss is never a
-    /// surprise. Returns the amount that would be lost.</summary>
-    public static AssetValue GetShipRefundLoss(CargoShipV2 ship)
-    {
-        CargoDepot home = ship?.AssignedDepot.ValueOrNull;
-        AssetValue refund = GetShipRefund(ship);
-        if (home == null || home.IsDestroyed || refund.IsEmpty)
-        {
-            return refund;
-        }
-        var lost = new Lyst<ProductQuantity>();
-        foreach (ProductQuantity pq in refund.Products)
-        {
-            Quantity free = Quantity.Zero;
-            for (int i = 0; i < home.Modules.Length; i++)
-            {
-                CargoDepotModule module = home.Modules[i].ValueOrNull;
-                if (module != null && !module.IsDestroyed
-                    && module.StoredProduct.ValueOrNull == pq.Product)
-                {
-                    free += module.Capacity - module.CurrentQuantity;
-                }
-            }
-            if (pq.Quantity > free)
-            {
-                lost.Add(pq.Product.WithQuantity(pq.Quantity - free));
-            }
-        }
-        return new AssetValue(lost.ToImmutableArray());
-    }
-
     /// <summary>Whether this ship has been sold and is on its way off the map.</summary>
     public bool IsShipForSale(CargoShipV2 ship)
     {
@@ -1015,27 +982,22 @@ public class ShippingManager
         {
             return null; // Already on its way out; selling twice must not pay twice.
         }
-        CargoDepot home = ship.AssignedDepot.ValueOrNull;
+        // Refund and remaining cargo both go where any other overflow material goes: the asset
+        // transaction manager fills matching global receivers and drops the rest into the
+        // shipyard. No terminal is involved, so a ship is worth the same wherever it is homed.
+        IAssetTransactionManager assets = ship.Context.AssetTransactionManager;
         AssetValue refund = GetShipRefund(ship);
         foreach (ProductQuantity pq in refund.Products)
         {
-            Quantity leftover = LocalCargoExchange.StoreInModules(home, pq);
-            if (leftover.IsPositive)
-            {
-                m_productsManager.ProductDestroyed(((Proto)ship.Prototype).SomeOption(),
-                    pq.Product, leftover, DestroyReason.General);
-            }
+            assets.StoreProduct(pq, CreateReason.Deconstruction);
         }
-        // Cargo still aboard goes down with the sale — there is nowhere to put it once the ship
-        // is off the map, and it is reported so the statistics stay honest.
         for (int i = 0; i < ship.Modules.Count; i++)
         {
             CargoShipModule module = ship.Modules[i].ValueOrNull;
             ProductProto product = module?.StoredProduct.ValueOrNull;
             if (module != null && product != null && module.Quantity.IsPositive)
             {
-                m_productsManager.ProductDestroyed(((Proto)ship.Prototype).SomeOption(),
-                    product, module.Quantity, DestroyReason.General);
+                assets.StoreProduct(product.WithQuantity(module.Quantity), null);
             }
         }
         m_shipsForSale.Add(ship);

@@ -263,27 +263,19 @@ internal static class Txt
         str("Ship_Selling", "Sold — leaving the map");
 
     public static readonly LocStrFormatted Ship_Sell_Tooltip = str("Ship_Sell_Tooltip",
-        "Sells this ship: it sails off the map and is removed. Its build cost is refunded into "
-        + "the home terminal's modules, reduced by the game's deconstruction refund setting. "
-        + "Only modules already carrying a refunded material can take it — anything that does "
-        + "not fit is lost, as is any cargo still aboard.");
+        "Sells this ship: it sails off the map and is removed. Its build cost, reduced by the "
+        + "game's deconstruction refund setting, and any cargo still aboard go to the shipyard "
+        + "like any other overflow material.");
 
     private static readonly string s_shipSellRefund =
-        text("Ship_SellRefund_Fmt", "Refund into {0}: {1}");
-
-    private static readonly string s_shipSellLoss =
-        text("Ship_SellLoss_Fmt", "Lost (nothing here takes it): {0}");
+        text("Ship_SellRefund_Fmt", "Refund to the shipyard: {0}");
 
     public static readonly LocStrFormatted Ship_SellNoRefund =
         str("Ship_SellNoRefund", "No refund available for this ship.");
 
-    /// <summary>What the home terminal will actually absorb of a sold ship's refund.</summary>
-    public static LocStrFormatted SellRefund(string terminal, string products)
-        => ModTranslations.Fmt(s_shipSellRefund, terminal, products);
-
-    /// <summary>The part of a sold ship's refund that no module can take.</summary>
-    public static LocStrFormatted SellLoss(string products)
-        => ModTranslations.Fmt(s_shipSellLoss, products);
+    /// <summary>What selling a ship returns.</summary>
+    public static LocStrFormatted SellRefund(string products)
+        => ModTranslations.Fmt(s_shipSellRefund, products);
 
     // ---------------------------------------------------------------- Ship status (ship window).
     public static readonly LocStrFormatted ShipStatus_Orphaned =

@@ -153,31 +153,17 @@ internal static class ShipHomePortPatch
     private static string describeSale(CargoShipV2 ship)
     {
         return (ShippingManager.Current?.IsShipForSale(ship) ?? false ? "sold|" : "")
-            + ShippingManager.GetShipRefund(ship) + "|" + ShippingManager.GetShipRefundLoss(ship);
+            + ShippingManager.GetShipRefund(ship);
     }
 
-    /// <summary>One line telling the player exactly what selling this ship returns, and what it
-    /// destroys — a terminal whose modules carry none of the build materials absorbs nothing, so
-    /// silence here would read as a full refund.</summary>
+    /// <summary>What selling this ship returns. The materials go to the shipyard like any other
+    /// overflow, so there is nothing to lose and no terminal to name.</summary>
     private static LocStrFormatted sellSummary(CargoShipV2 ship)
     {
         AssetValue refund = ShippingManager.GetShipRefund(ship);
-        if (refund.IsEmpty)
-        {
-            return Txt.Ship_SellNoRefund;
-        }
-        // The refund is worth the same wherever the ship is homed; the home terminal is only
-        // where it gets stored, so a missing one loses the lot rather than reducing it.
-        CargoDepot home = ship.AssignedDepot.ValueOrNull;
-        if (home == null || home.IsDestroyed)
-        {
-            return Txt.SellLoss(describeProducts(refund));
-        }
-        AssetValue lost = ShippingManager.GetShipRefundLoss(ship);
-        LocStrFormatted summary = Txt.SellRefund(home.GetTitle(), describeProducts(refund));
-        return lost.IsEmpty
-            ? summary
-            : summary + " ".AsLoc() + Txt.SellLoss(describeProducts(lost));
+        return refund.IsEmpty
+            ? Txt.Ship_SellNoRefund
+            : Txt.SellRefund(describeProducts(refund));
     }
 
     private static string describeProducts(AssetValue value)
