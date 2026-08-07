@@ -268,7 +268,7 @@ internal static class Txt
         + "like any other overflow material.");
 
     private static readonly string s_shipSellRefund =
-        text("Ship_SellRefund_Fmt", "Refund to the shipyard: {0}");
+        text("Ship_SellRefund_Fmt", "Refund: {0}");
 
     public static readonly LocStrFormatted Ship_SellNoRefund =
         str("Ship_SellNoRefund", "No refund available for this ship.");
