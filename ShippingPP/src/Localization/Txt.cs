@@ -272,10 +272,10 @@ internal static class Txt
         text("Ship_SellRefund_Fmt", "Refund into {0}: {1}");
 
     private static readonly string s_shipSellLoss =
-        text("Ship_SellLoss_Fmt", "Lost (no module takes it): {0}");
+        text("Ship_SellLoss_Fmt", "Lost (nothing here takes it): {0}");
 
     public static readonly LocStrFormatted Ship_SellNoRefund =
-        str("Ship_SellNoRefund", "No refund — this ship has no home terminal.");
+        str("Ship_SellNoRefund", "No refund available for this ship.");
 
     /// <summary>What the home terminal will actually absorb of a sold ship's refund.</summary>
     public static LocStrFormatted SellRefund(string terminal, string products)

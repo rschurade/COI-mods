@@ -161,11 +161,17 @@ internal static class ShipHomePortPatch
     /// silence here would read as a full refund.</summary>
     private static LocStrFormatted sellSummary(CargoShipV2 ship)
     {
-        CargoDepot home = ship.AssignedDepot.ValueOrNull;
         AssetValue refund = ShippingManager.GetShipRefund(ship);
-        if (home == null || home.IsDestroyed || refund.IsEmpty)
+        if (refund.IsEmpty)
         {
             return Txt.Ship_SellNoRefund;
+        }
+        // The refund is worth the same wherever the ship is homed; the home terminal is only
+        // where it gets stored, so a missing one loses the lot rather than reducing it.
+        CargoDepot home = ship.AssignedDepot.ValueOrNull;
+        if (home == null || home.IsDestroyed)
+        {
+            return Txt.SellLoss(describeProducts(refund));
         }
         AssetValue lost = ShippingManager.GetShipRefundLoss(ship);
         LocStrFormatted summary = Txt.SellRefund(home.GetTitle(), describeProducts(refund));

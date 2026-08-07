@@ -936,22 +936,23 @@ public class ShippingManager
     /// </summary>
     public static AssetValue GetShipRefund(CargoShipV2 ship)
     {
-        CargoDepot home = ship?.AssignedDepot.ValueOrNull;
-        if (home == null || home.IsDestroyed)
+        // Priced off the SHIP's own module count, not its home terminal's: what a ship is worth
+        // is what it cost to build, which has nothing to do with where it happens to be homed
+        // (and a ship whose home was demolished is worth no less).
+        AssetValue perModule = ShipBuildCostPerModule;
+        var shipProto = ship?.Prototype as CargoShipProto;
+        if (shipProto == null || perModule.IsEmpty)
         {
             return AssetValue.Empty;
         }
-        AssetValue cost = GetShipBuildCost(home);
-        // IntegerPart is exact here: the difficulty setting is whole percents (100 or 80).
-        int multiplier = (DeconstructionRefund?.Value ?? Percent.Hundred).IntegerPart;
-        if (cost.IsEmpty || multiplier <= 0)
-        {
-            return AssetValue.Empty;
-        }
+        // Percent stores a ratio (Hundred.RawValue == 100000), so it must be applied with
+        // Apply() — reading IntegerPart yields 1 for 100% and 0 for 80%.
+        Percent multiplier = DeconstructionRefund?.Value ?? Percent.Hundred;
         var products = new Lyst<ProductQuantity>();
-        foreach (ProductQuantity pq in cost.Products)
+        foreach (ProductQuantity pq in perModule.Products)
         {
-            Quantity refunded = (pq.Quantity.Value * multiplier / 100).Quantity();
+            Quantity refunded = multiplier
+                .Apply(pq.Quantity.Value * shipProto.MaximumModulesCount).Quantity();
             if (refunded.IsPositive)
             {
                 products.Add(pq.Product.WithQuantity(refunded));
