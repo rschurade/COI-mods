@@ -261,6 +261,19 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
+        // Dry at the berth: hold it until this terminal fills the tank. Leaving is impossible
+        // (there is no fuel to pay a leg with) and yielding the berth would only move the ship
+        // away from the one place its fuel can come from — so the ship deliberately blocks the
+        // dock, and its status says which fuel to deliver. Claims elsewhere are dropped: a stuck
+        // ship must not sit in another terminal's queue (or on its berth promise) meanwhile.
+        if (!canPayLegFuel())
+        {
+            m_lowFuel = true;
+            m_target = null;
+            manager.ReleaseDockClaim(m_ship);
+            return;
+        }
+
         // Line mode: cycle the assigned line's stops; the network dispatcher is not consulted.
         if (line != null)
         {
@@ -559,8 +572,11 @@ public class LocalShipJobProvider : ICargoShipJobProvider
     /// Charges half a vanilla fuel journey for the upcoming leg; false (and a status flag) when
     /// the tank does not cover it.
     /// </summary>
-    private bool tryConsumeLegFuel()
+    /// <summary>Fuel the next leg costs, or false when this ship's fuel type charges nothing.
+    /// </summary>
+    private bool tryGetLegFuelNeeded(out Quantity needed)
     {
+        needed = Quantity.Zero;
         CargoShipProto.FuelData fuelData = null;
         foreach (CargoShipProto.FuelData candidate in m_ship.Prototype.AvailableFuels)
         {
@@ -572,8 +588,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
         if (fuelData == null)
         {
-            m_lowFuel = false;
-            return true;
+            return false;
         }
         int nonEmptyModules = 0;
         for (int i = 0; i < m_ship.Modules.Count; i++)
@@ -583,8 +598,25 @@ public class LocalShipJobProvider : ICargoShipJobProvider
                 nonEmptyModules++;
             }
         }
-        var needed = new Quantity((fuelData.FuelPerJourneyBase.Value
+        needed = new Quantity((fuelData.FuelPerJourneyBase.Value
             + fuelData.FuelPerJourneyPerModule.Value * nonEmptyModules) / 2);
+        return true;
+    }
+
+    /// <summary>Whether the tank covers the next leg, WITHOUT charging for it.</summary>
+    private bool canPayLegFuel()
+    {
+        return m_legFuelPaid || !tryGetLegFuelNeeded(out Quantity needed)
+            || m_ship.FuelBuffer.Quantity >= needed;
+    }
+
+    private bool tryConsumeLegFuel()
+    {
+        if (!tryGetLegFuelNeeded(out Quantity needed))
+        {
+            m_lowFuel = false;
+            return true;
+        }
         if (m_ship.FuelBuffer.Quantity < needed)
         {
             m_lowFuel = true;
@@ -631,7 +663,11 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         if (m_lowFuel)
         {
             state = StateForUi.Warning;
-            return Txt.ShipStatus_LowFuel;
+            // Docked and dry: the ship is holding this berth on purpose, so say so and name the
+            // fuel — otherwise a blocked dock looks like the mod has hung.
+            return m_ship.IsDocked
+                ? Txt.ShipStatus_WaitingForFuel(m_ship.FuelProto.Strings.Name.AsFormatted.Value)
+                : Txt.ShipStatus_LowFuel;
         }
         state = StateForUi.Positive;
         if (m_ship.IsDocked && m_ship.DockedAt.ValueOrNull is CargoDepot dockedAt

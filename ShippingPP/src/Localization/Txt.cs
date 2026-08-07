@@ -217,6 +217,14 @@ internal static class Txt
     public static readonly LocStrFormatted ShipStatus_LowFuel =
         str("ShipStatus_LowFuel", "Not enough fuel for the next trip");
 
+    private static readonly string s_shipWaitingForFuel = text("ShipStatus_WaitingForFuel_Fmt",
+        "Out of fuel — holding the berth until {0} is delivered here");
+
+    /// <summary>Docked and out of fuel: the ship holds the berth until the terminal can fill its
+    /// tank, so the status names the fuel the player has to deliver.</summary>
+    public static LocStrFormatted ShipStatus_WaitingForFuel(string fuel)
+        => ModTranslations.Fmt(s_shipWaitingForFuel, fuel);
+
     public static readonly LocStrFormatted ShipStatus_TransferringCargo =
         str("ShipStatus_TransferringCargo", "Transferring cargo");
 

@@ -46,6 +46,7 @@
 	["ShippingPP__Ship_NoHomePort", "None — the home terminal was destroyed!"],
 	["ShippingPP__ShipStatus_Orphaned", "No home port — the home terminal was destroyed. Select a new home port in this window to put the ship back into service."],
 	["ShippingPP__ShipStatus_LowFuel", "Not enough fuel for the next trip"],
+	["ShippingPP__ShipStatus_WaitingForFuel_Fmt", "Out of fuel — holding the berth until {0} is delivered here"],
 	["ShippingPP__ShipStatus_TransferringCargo", "Transferring cargo"],
 	["ShippingPP__ShipStatus_LineUnusable", "Assigned line has no usable route — add at least two terminal stops to the line, or unassign the ship to resume automatic dispatch."],
 	["ShippingPP__ShipStatus_Idle", "Serving local terminals"],
