@@ -1,6 +1,53 @@
 Shipping++ — Changelog
 ================================
 
+v0.5.0
+------
+Verified against game version 0.8.7.
+
+Ships now run on lines only:
+- Automatic dispatch is gone. A ship serves the line it is assigned
+  to, and nothing else — no more cargo moving for reasons you cannot
+  see or control. A ship with no line (or whose line has fewer than
+  two terminal stops) is out of service: it parks at its home anchor,
+  holds no berth, yields the dock to any ship that wants it, and says
+  so in its status.
+
+Departure rules per stop:
+- Each terminal stop of a line decides when a ship may leave it:
+  leave when done (as before), load to a percentage, or unload to a
+  percentage — measured against the ship's total cargo capacity. So a
+  ship can be made to fill up at an export dock and empty out at an
+  import dock instead of leaving the moment the cranes stop.
+- This fixes ships bouncing between a full import dock and an empty
+  export dock, burning fuel and moving nothing.
+- Any waiting rule can be given a timeout, so a stop that never
+  reaches its level cannot hold a ship — or the berth behind it —
+  forever.
+- Rules live on the stop, so the same terminal can behave differently
+  on different lines.
+- "Depart now" in the ship window works for a docked ship and
+  overrules the rule, the transfer in progress and the settle delay.
+
+Selling ships:
+- The ship window can sell a ship: it sails off the map and is
+  removed. Its build cost, reduced by the game's deconstruction refund
+  setting, and any cargo still aboard go to the shipyard like any
+  other overflow material.
+
+Fixes:
+- Fixed a fleet of ships running dry deadlocking their own home
+  terminal: each ship in turn was granted the berth, gave it back to
+  "run home for fuel" — which was that same berth — and dropped to the
+  back of the queue. The dock stayed empty while every ship waited for
+  fuel sitting in it.
+- A ship that docks with an empty tank now holds the berth on purpose
+  until the terminal refuels it, and its status names the fuel to
+  deliver. It no longer occupies a waiting slot at a terminal it
+  cannot reach.
+- The lines manager shows what each ship is carrying, as absolute
+  amounts, next to its name.
+
 v0.4.2
 ------
 - Fixed a save-loading error ("Entity 'LocalTerminal' has two different
