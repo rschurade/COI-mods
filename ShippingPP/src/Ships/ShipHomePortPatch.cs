@@ -1,11 +1,13 @@
-using System;
+﻿using System;
 using System.Reflection;
 using HarmonyLib;
 using Mafi;
 using Mafi.Core;
 using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Ships;
+using Mafi.Core.Economy;
 using Mafi.Core.Entities;
+using Mafi.Core.Products;
 using Mafi.Core.Syncers;
 using Mafi.Localization;
 using Mafi.Unity.Ui;
@@ -65,16 +67,62 @@ internal static class ShipHomePortPatch
                 Lines.ShippingLinesManagerWindow.Controller.Current?.StartHomeSelection(ship);
             }
         }).NoShrink();
-        PanelWithHeader panel = inspector.AddPanelWithHeader(new Row(4.pt())
+        // Selling is destructive and irreversible, so the button carries the exact refund (and
+        // what will be lost) in its tooltip rather than only in the panel header.
+        var sellLabel = new Label().Color(Theme.InactiveColor);
+        var sellBtn = new ButtonText(Txt.Ship_Sell, delegate
         {
-            (Action<Row>)delegate(Row r)
+            CargoShipV2 ship = inspector.Entity;
+            if (ship != null && ShippingManager.IsLocalShip(ship))
             {
-                r.AlignItemsCenter().JustifyItemsSpaceBetween();
+                Lines.ShippingLinesManagerWindow.Controller.Current?.SellShip(ship);
+            }
+        }).NoShrink();
+        PanelWithHeader panel = inspector.AddPanelWithHeader(new Column(2.pt())
+        {
+            new Row(4.pt())
+            {
+                (Action<Row>)delegate(Row r)
+                {
+                    r.AlignItemsCenter().JustifyItemsSpaceBetween().AlignSelfStretch();
+                },
+                homeLabel,
+                selectBtn
             },
-            homeLabel,
-            selectBtn
+            new Row(4.pt())
+            {
+                (Action<Row>)delegate(Row r)
+                {
+                    r.AlignItemsCenter().JustifyItemsSpaceBetween().AlignSelfStretch();
+                },
+                sellLabel,
+                sellBtn
+            }
         });
         panel.Title(Txt.Ship_HomePort_Title, Txt.Ship_HomePort_Tooltip);
+
+        inspector.Observe(delegate
+        {
+            CargoShipV2 ship = inspector.Entity;
+            if (ship == null || !ShippingManager.IsLocalShip(ship))
+            {
+                return "";
+            }
+            // Recomputed from live module fill, so the shown loss tracks the terminal's state.
+            return describeSale(ship);
+        }).Do(delegate(string _)
+        {
+            CargoShipV2 ship = inspector.Entity;
+            if (ship == null || !ShippingManager.IsLocalShip(ship))
+            {
+                return;
+            }
+            bool selling = ShippingManager.Current?.IsShipForSale(ship) ?? false;
+            sellBtn.Visible(!selling);
+            ((IComponentWithText)sellLabel).SetValue(
+                selling ? Txt.Ship_Selling : sellSummary(ship));
+            sellBtn.Tooltip(Txt.Ship_Sell_Tooltip);
+        });
 
         inspector.Observe(() => inspector.Entity != null
                 && ShippingManager.IsLocalShip(inspector.Entity))
@@ -98,5 +146,42 @@ internal static class ShipHomePortPatch
                 orphaned ? Txt.Ship_NoHomePort : title.AsLoc());
             homeLabel.Color(orphaned ? ColorRgba.Red : (ColorRgba?)null);
         });
+    }
+
+    /// <summary>Signature of the sale outcome, so the observer only fires when it changes.
+    /// </summary>
+    private static string describeSale(CargoShipV2 ship)
+    {
+        return (ShippingManager.Current?.IsShipForSale(ship) ?? false ? "sold|" : "")
+            + ShippingManager.GetShipRefund(ship) + "|" + ShippingManager.GetShipRefundLoss(ship);
+    }
+
+    /// <summary>One line telling the player exactly what selling this ship returns, and what it
+    /// destroys — a terminal whose modules carry none of the build materials absorbs nothing, so
+    /// silence here would read as a full refund.</summary>
+    private static LocStrFormatted sellSummary(CargoShipV2 ship)
+    {
+        CargoDepot home = ship.AssignedDepot.ValueOrNull;
+        AssetValue refund = ShippingManager.GetShipRefund(ship);
+        if (home == null || home.IsDestroyed || refund.IsEmpty)
+        {
+            return Txt.Ship_SellNoRefund;
+        }
+        AssetValue lost = ShippingManager.GetShipRefundLoss(ship);
+        LocStrFormatted summary = Txt.SellRefund(home.GetTitle(), describeProducts(refund));
+        return lost.IsEmpty
+            ? summary
+            : summary + " ".AsLoc() + Txt.SellLoss(describeProducts(lost));
+    }
+
+    private static string describeProducts(AssetValue value)
+    {
+        string text = "";
+        foreach (ProductQuantity pq in value.Products)
+        {
+            text += (text.Length == 0 ? "" : ", ")
+                + pq.Quantity.Value + " " + pq.Product.Strings.Name.TranslatedString;
+        }
+        return text.Length == 0 ? "-" : text;
     }
 }

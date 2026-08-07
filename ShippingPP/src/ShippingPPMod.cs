@@ -1,7 +1,9 @@
-using System;
+﻿using System;
 using Mafi;
 using Mafi.Collections;
+using Mafi.Core;
 using Mafi.Core.Game;
+using Mafi.Core.PropertiesDb;
 using Mafi.Core.Mods;
 using Mafi.Core.Prototypes;
 
@@ -75,6 +77,19 @@ public sealed class ShippingPPMod : IMod
 
     public void Initialize(DependencyResolver resolver, bool gameWasLoaded)
     {
+        // The difficulty's deconstruction refund multiplier, used when a ship is sold. Resolved
+        // here so the manager never has to carry a properties-db reference through save games.
+        try
+        {
+            ShippingManager.DeconstructionRefund = resolver.Resolve<IPropertiesDb>()
+                .GetProperty(IdsCore.PropertyIds.DeconstructionRefundMultiplier);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: deconstruction refund property not resolved ({ex.Message}); "
+                + "sold ships will refund their full build cost.");
+        }
+
         // Registers the procedural buoy model before any entity renders.
         try
         {

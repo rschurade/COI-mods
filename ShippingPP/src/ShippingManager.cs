@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Mafi;
 using Mafi.Collections;
@@ -12,6 +12,7 @@ using Mafi.Core.Economy;
 using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static;
 using Mafi.Core.Notifications;
+using Mafi.Core.PropertiesDb;
 using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Simulation;
@@ -40,7 +41,7 @@ namespace ShippingPP;
 public class ShippingManager
 {
     /// <summary>Version stamp of this manager's own save data (bump when the format changes).</summary>
-    private const int SAVE_VERSION = 8;
+    private const int SAVE_VERSION = 9;
 
     /// <summary>The "ship has no home port" warning; registered in
     /// <see cref="Terminals.LocalTerminalData"/> at proto-registration time.</summary>
@@ -89,8 +90,16 @@ public class ShippingManager
         return new AssetValue(products.ToImmutableArray());
     }
 
+    /// <summary>The game's deconstruction refund multiplier (the difficulty setting that decides
+    /// how much of a demolished thing comes back). Resolved at mod init, so the manager does not
+    /// have to carry a properties-db reference through save games.</summary>
+    public static IProperty<Percent> DeconstructionRefund;
+
     private readonly Dict<CargoDepot, ShipBuildState> m_builds;
     private readonly Set<CargoShipV2> m_localShips;
+    /// <summary>Ships the player sold: they sail off the map and are removed on arrival there.
+    /// </summary>
+    private readonly Set<CargoShipV2> m_shipsForSale;
     /// <summary>Per-dock arrival queue: the head ship may dock (once the dock is physically
     /// free), the rest hold at anchor outside the harbor. Entries are removed on arrival,
     /// on retarget (<see cref="ReleaseDockClaim"/>) and when ships/terminals die.</summary>
@@ -142,6 +151,7 @@ public class ShippingManager
     {
         m_builds = new Dict<CargoDepot, ShipBuildState>();
         m_localShips = new Set<CargoShipV2>();
+        m_shipsForSale = new Set<CargoShipV2>();
         m_dockQueues = new Dict<CargoDepot, Lyst<CargoShipV2>>();
         m_cargoPlans = new Dict<CargoShipV2, CargoPlan>();
         m_berthGrants = new Dict<CargoDepot, CargoShipV2>();
@@ -985,6 +995,7 @@ public class ShippingManager
             }
             vacateVanillaShipSlots();
             completePendingFuelSwitches();
+            removeSoldShips();
             updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
             pruneDestroyedShips();
             syncModuleDirections();
@@ -1096,6 +1107,154 @@ public class ShippingManager
         {
             Diag.Write(Diag.DescribeShip(ship,
                 m_shipLines.TryGetValue(ship, out int lineId) ? lineId.ToString() : "none"));
+        }
+    }
+
+    // ------------------------------------------------------------ selling ships
+
+    /// <summary>
+    /// What selling this ship returns: its build cost scaled by the game's deconstruction refund
+    /// setting (Full returns everything, Partial keeps 20% back), exactly like demolishing a
+    /// building. Empty when the ship has no home terminal to price it against.
+    /// </summary>
+    public static AssetValue GetShipRefund(CargoShipV2 ship)
+    {
+        CargoDepot home = ship?.AssignedDepot.ValueOrNull;
+        if (home == null || home.IsDestroyed)
+        {
+            return AssetValue.Empty;
+        }
+        AssetValue cost = GetShipBuildCost(home);
+        // IntegerPart is exact here: the difficulty setting is whole percents (100 or 80).
+        int multiplier = (DeconstructionRefund?.Value ?? Percent.Hundred).IntegerPart;
+        if (cost.IsEmpty || multiplier <= 0)
+        {
+            return AssetValue.Empty;
+        }
+        var products = new Lyst<ProductQuantity>();
+        foreach (ProductQuantity pq in cost.Products)
+        {
+            Quantity refunded = (pq.Quantity.Value * multiplier / 100).Quantity();
+            if (refunded.IsPositive)
+            {
+                products.Add(pq.Product.WithQuantity(refunded));
+            }
+        }
+        return new AssetValue(products.ToImmutableArray());
+    }
+
+    /// <summary>How much of <see cref="GetShipRefund"/> the home terminal's modules can actually
+    /// take: a module only accepts the product it is set to carry, so a terminal shipping ore has
+    /// nowhere to put the ship's steel. Used by the sell confirmation so the loss is never a
+    /// surprise. Returns the amount that would be lost.</summary>
+    public static AssetValue GetShipRefundLoss(CargoShipV2 ship)
+    {
+        CargoDepot home = ship?.AssignedDepot.ValueOrNull;
+        AssetValue refund = GetShipRefund(ship);
+        if (home == null || home.IsDestroyed || refund.IsEmpty)
+        {
+            return refund;
+        }
+        var lost = new Lyst<ProductQuantity>();
+        foreach (ProductQuantity pq in refund.Products)
+        {
+            Quantity free = Quantity.Zero;
+            for (int i = 0; i < home.Modules.Length; i++)
+            {
+                CargoDepotModule module = home.Modules[i].ValueOrNull;
+                if (module != null && !module.IsDestroyed
+                    && module.StoredProduct.ValueOrNull == pq.Product)
+                {
+                    free += module.Capacity - module.CurrentQuantity;
+                }
+            }
+            if (pq.Quantity > free)
+            {
+                lost.Add(pq.Product.WithQuantity(pq.Quantity - free));
+            }
+        }
+        return new AssetValue(lost.ToImmutableArray());
+    }
+
+    /// <summary>Whether this ship has been sold and is on its way off the map.</summary>
+    public bool IsShipForSale(CargoShipV2 ship)
+    {
+        return m_shipsForSale.Contains(ship);
+    }
+
+    /// <summary>
+    /// Sells the ship: the refund (what the home terminal's modules can take) is credited now,
+    /// the ship leaves its line and every dock claim, and it sails off the map — the scan tick
+    /// removes it once it is gone. Returns an error message, or null on success.
+    /// </summary>
+    public string SellShip(CargoShipV2 ship)
+    {
+        if (ship == null || ship.IsDestroyed || !IsLocalShip(ship))
+        {
+            return "Not a local cargo ship.";
+        }
+        if (m_shipsForSale.Contains(ship))
+        {
+            return null; // Already on its way out; selling twice must not pay twice.
+        }
+        CargoDepot home = ship.AssignedDepot.ValueOrNull;
+        AssetValue refund = GetShipRefund(ship);
+        foreach (ProductQuantity pq in refund.Products)
+        {
+            Quantity leftover = LocalCargoExchange.StoreInModules(home, pq);
+            if (leftover.IsPositive)
+            {
+                m_productsManager.ProductDestroyed(((Proto)ship.Prototype).SomeOption(),
+                    pq.Product, leftover, DestroyReason.General);
+            }
+        }
+        // Cargo still aboard goes down with the sale — there is nowhere to put it once the ship
+        // is off the map, and it is reported so the statistics stay honest.
+        for (int i = 0; i < ship.Modules.Count; i++)
+        {
+            CargoShipModule module = ship.Modules[i].ValueOrNull;
+            ProductProto product = module?.StoredProduct.ValueOrNull;
+            if (module != null && product != null && module.Quantity.IsPositive)
+            {
+                m_productsManager.ProductDestroyed(((Proto)ship.Prototype).SomeOption(),
+                    product, module.Quantity, DestroyReason.General);
+            }
+        }
+        m_shipsForSale.Add(ship);
+        m_shipLines.Remove(ship);
+        ReleaseDockClaim(ship);
+        Log.Info($"Shipping++: sold ship {ship.Id} (refund {refund}).");
+        return null;
+    }
+
+    /// <summary>Removes sold ships once they have sailed off the map.</summary>
+    private void removeSoldShips()
+    {
+        if (m_shipsForSale.Count == 0)
+        {
+            return;
+        }
+        Lyst<CargoShipV2> gone = null;
+        foreach (CargoShipV2 ship in m_shipsForSale)
+        {
+            if (ship.IsDestroyed || ship.IsAtWorld)
+            {
+                (gone = gone ?? new Lyst<CargoShipV2>()).Add(ship);
+            }
+        }
+        if (gone == null)
+        {
+            return;
+        }
+        foreach (CargoShipV2 ship in gone)
+        {
+            m_shipsForSale.Remove(ship);
+            m_localShips.Remove(ship);
+            if (!ship.IsDestroyed)
+            {
+                m_entitiesManager.TryRemoveAndDestroyEntity(ship, EntityRemoveReason.Remove);
+            }
+            Log.Info($"Shipping++: sold ship {ship.Id} has left the map and was removed.");
         }
     }
 
@@ -1389,6 +1548,7 @@ public class ShippingManager
             CargoShipV2.Serialize(pair.Key, writer);
             EntityNotificator.Serialize(pair.Value, writer);
         }
+        Set<CargoShipV2>.Serialize(m_shipsForSale, writer);
     }
 
     public static ShippingManager Deserialize(BlobReader reader)
@@ -1495,6 +1655,8 @@ public class ShippingManager
                     ship, EntityNotificator.Deserialize(reader)));
             }
         }
+        reader.SetField(this, "m_shipsForSale", (version >= 9)
+            ? Set<CargoShipV2>.Deserialize(reader) : new Set<CargoShipV2>());
         reader.RegisterInitAfterLoad(this, nameof(initDictsAfterLoad), InitPriority.Normal);
         s_current = this;
     }

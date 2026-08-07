@@ -208,6 +208,35 @@ internal static class Txt
     public static readonly LocStrFormatted Ship_NoHomePort =
         str("Ship_NoHomePort", "None — the home terminal was destroyed!");
 
+    public static readonly LocStrFormatted Ship_Sell =
+        str("Ship_Sell", "Sell ship");
+
+    public static readonly LocStrFormatted Ship_Selling =
+        str("Ship_Selling", "Sold — leaving the map");
+
+    public static readonly LocStrFormatted Ship_Sell_Tooltip = str("Ship_Sell_Tooltip",
+        "Sells this ship: it sails off the map and is removed. Its build cost is refunded into "
+        + "the home terminal's modules, reduced by the game's deconstruction refund setting. "
+        + "Only modules already carrying a refunded material can take it — anything that does "
+        + "not fit is lost, as is any cargo still aboard.");
+
+    private static readonly string s_shipSellRefund =
+        text("Ship_SellRefund_Fmt", "Refund into {0}: {1}");
+
+    private static readonly string s_shipSellLoss =
+        text("Ship_SellLoss_Fmt", "Lost (no module takes it): {0}");
+
+    public static readonly LocStrFormatted Ship_SellNoRefund =
+        str("Ship_SellNoRefund", "No refund — this ship has no home terminal.");
+
+    /// <summary>What the home terminal will actually absorb of a sold ship's refund.</summary>
+    public static LocStrFormatted SellRefund(string terminal, string products)
+        => ModTranslations.Fmt(s_shipSellRefund, terminal, products);
+
+    /// <summary>The part of a sold ship's refund that no module can take.</summary>
+    public static LocStrFormatted SellLoss(string products)
+        => ModTranslations.Fmt(s_shipSellLoss, products);
+
     // ---------------------------------------------------------------- Ship status (ship window).
     public static readonly LocStrFormatted ShipStatus_Orphaned =
         str("ShipStatus_Orphaned",

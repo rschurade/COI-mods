@@ -125,6 +125,16 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
+        // Sold: head for the map edge and stop taking part in anything. The manager removes the
+        // ship once it is out at world; until then it must not hold a berth or a queue slot.
+        if (manager.IsShipForSale(m_ship))
+        {
+            m_target = null;
+            manager.ReleaseDockClaim(m_ship);
+            m_ship.LeaveToWorld();
+            return;
+        }
+
         // A line-assigned ship whose line has no usable route does NOT fall back to network
         // dispatch — the assignment is explicit player intent, so it finishes its current leg
         // and then idles (with a warning status) until the line gets two terminal stops or the

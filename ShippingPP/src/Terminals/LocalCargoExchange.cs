@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Reflection;
 using Mafi;
 using Mafi.Core;
+using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
 using Mafi.Core.Buildings.Cargo.Ships.Modules;
@@ -308,6 +309,36 @@ internal static class LocalCargoExchange
         {
             pipeTimer.Start(s_durationToLowerPipe);
         }
+    }
+
+    /// <summary>
+    /// Stores as much of <paramref name="pq"/> as fits into the terminal's modules that already
+    /// hold that product, and returns what did not fit. Note that a module only accepts the one
+    /// product the player assigned to it, so materials nothing is set to carry (typically the
+    /// construction goods of a ship refund) come straight back as leftover.
+    /// </summary>
+    internal static Quantity StoreInModules(CargoDepot terminal, ProductQuantity pq)
+    {
+        if (!TryInitialize() || terminal == null || terminal.IsDestroyed)
+        {
+            return pq.Quantity;
+        }
+        Quantity remaining = pq.Quantity;
+        for (int i = 0; i < terminal.Modules.Length && remaining.IsPositive; i++)
+        {
+            CargoDepotModule module = terminal.Modules[i].ValueOrNull;
+            if (module == null || module.IsDestroyed
+                || module.StoredProduct.ValueOrNull != pq.Product)
+            {
+                continue;
+            }
+            ProductBuffer buffer = getBuffer(module);
+            if (buffer != null)
+            {
+                remaining = buffer.StoreAsMuchAs(remaining);
+            }
+        }
+        return remaining;
     }
 
     private static ProductBuffer getBuffer(CargoDepotModule module)

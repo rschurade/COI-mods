@@ -985,6 +985,18 @@ public class ShippingLinesManagerWindow : Window
             stopHomeSelection();
         }
 
+        /// <summary>Sells the ship (from the ship window's sell button) through the input-command
+        /// pipeline, so the sale is deterministic and save/replay safe like every other edit.
+        /// </summary>
+        public void SellShip(CargoShipV2 ship)
+        {
+            if (ship == null || ship.IsDestroyed)
+            {
+                return;
+            }
+            m_inputScheduler.ScheduleInputCmd(new Terminals.SellShipCmd(ship.Id));
+        }
+
         /// <summary>Enters the map home-port-picking mode for the ship (started from the ship
         /// window's home-port panel): click a local terminal to make it the ship's new home,
         /// right-click/Escape to cancel.</summary>

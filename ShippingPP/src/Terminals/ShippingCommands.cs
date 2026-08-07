@@ -219,6 +219,56 @@ public class SetShipHomeCmd : InputCommand
     }
 }
 
+/// <summary>
+/// Sells a local cargo ship: the refund is credited to its home terminal at once and the ship
+/// sails off the map, where it is removed. Sent by the ship window's sell button.
+/// </summary>
+public class SellShipCmd : InputCommand
+{
+    public readonly EntityId ShipId;
+
+    private static readonly Action<object, BlobWriter> s_serializeDataDelayedAction =
+        (obj, writer) => ((SellShipCmd)obj).SerializeData(writer);
+    private static readonly Action<object, BlobReader> s_deserializeDataDelayedAction =
+        (obj, reader) => ((SellShipCmd)obj).DeserializeData(reader);
+
+    public SellShipCmd(EntityId shipId)
+    {
+        ShipId = shipId;
+    }
+
+    public static void Serialize(SellShipCmd value, BlobWriter writer)
+    {
+        if (writer.TryStartClassSerialization(value))
+        {
+            writer.EnqueueDataSerialization(value, s_serializeDataDelayedAction);
+        }
+    }
+
+    protected override void SerializeData(BlobWriter writer)
+    {
+        base.SerializeData(writer);
+        EntityId.Serialize(ShipId, writer);
+    }
+
+    public new static SellShipCmd Deserialize(BlobReader reader)
+    {
+        if (reader.TryStartClassDeserialization(out SellShipCmd obj,
+            (Func<BlobReader, Type, SellShipCmd>)null,
+            (Func<BlobReader, string, SellShipCmd>)null, nullObjIsOk: false))
+        {
+            reader.EnqueueDataDeserialization(obj, s_deserializeDataDelayedAction);
+        }
+        return obj;
+    }
+
+    protected override void DeserializeData(BlobReader reader)
+    {
+        base.DeserializeData(reader);
+        reader.SetField(this, "ShipId", EntityId.Deserialize(reader));
+    }
+}
+
 /// <summary>Edits shipping lines: create/delete lines, add/remove stops, (un)assign ships.</summary>
 public class ModifyLineCmd : InputCommand
 {
@@ -313,6 +363,7 @@ internal class ShippingCommandsProcessor
       ICommandProcessor<SetModuleDirectionCmd>, IAction<SetModuleDirectionCmd>,
       ICommandProcessor<SetModuleThresholdCmd>, IAction<SetModuleThresholdCmd>,
       ICommandProcessor<SetShipHomeCmd>, IAction<SetShipHomeCmd>,
+      ICommandProcessor<SellShipCmd>, IAction<SellShipCmd>,
       ICommandProcessor<ModifyLineCmd>, IAction<ModifyLineCmd>
 {
     private readonly EntitiesManager m_entitiesManager;
@@ -384,6 +435,23 @@ internal class ShippingCommandsProcessor
             return;
         }
         string error = m_shippingManager.SetShipHome(ship, terminal);
+        if (error != null)
+        {
+            cmd.SetResultError(error);
+            return;
+        }
+        cmd.SetResultSuccess();
+    }
+
+    void IAction<SellShipCmd>.Invoke(SellShipCmd cmd)
+    {
+        if (!m_entitiesManager.TryGetEntity(cmd.ShipId,
+            out Mafi.Core.Buildings.Cargo.Ships.CargoShipV2 ship))
+        {
+            cmd.SetResultError($"Failed to get cargo ship with ID {cmd.ShipId}.");
+            return;
+        }
+        string error = m_shippingManager.SellShip(ship);
         if (error != null)
         {
             cmd.SetResultError(error);
