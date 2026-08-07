@@ -5,6 +5,7 @@ using Mafi.Core;
 using Mafi.Core.Buildings.Cargo;
 using Mafi.Core.Buildings.Cargo.Modules;
 using Mafi.Core.Buildings.Cargo.Ships;
+using Mafi.Core.Buildings.Cargo.Ships.Modules;
 using Mafi.Core.Entities;
 using Mafi.Core.Input;
 using Mafi.Core.Products;
@@ -395,7 +396,16 @@ public class ShippingLinesManagerWindow : Window
             {
                 // Titles included so entity renames refresh the rows.
                 sb.Append(ship.Id.Value).Append(':').Append(ship.GetTitle()).Append(':')
-                    .Append(m_manager.GetLineIdFor(ship) ?? -1).Append(';');
+                    .Append(m_manager.GetLineIdFor(ship) ?? -1).Append(':');
+                // Cargo module products, so a ship's cargo strip rebuilds when it gains a
+                // module or switches product (amounts are excluded — they update in place,
+                // see computeFillHash).
+                for (int i = 0; i < ship.Modules.Count; i++)
+                {
+                    sb.Append(ship.Modules[i].ValueOrNull?.StoredProduct.ValueOrNull
+                        ?.Id.Value ?? "").Append(',');
+                }
+                sb.Append(';');
             }
         }
         sb.Append('|');
@@ -447,6 +457,23 @@ public class ShippingLinesManagerWindow : Window
                 {
                     sb.Append(module.CurrentQuantity.Value)
                         .Append(m_manager.IsExportModule(module) ? 'e' : 'i');
+                }
+            }
+        }
+        // Ship cargo amounts, for the ship rows' cargo strips.
+        sb.Append('|');
+        foreach (CargoShipV2 ship in m_entitiesManager.GetAllEntitiesOfType<CargoShipV2>())
+        {
+            if (ship.IsDestroyed || !ShippingManager.IsLocalShip(ship))
+            {
+                continue;
+            }
+            for (int i = 0; i < ship.Modules.Count; i++)
+            {
+                CargoShipModule module = ship.Modules[i].ValueOrNull;
+                if (module != null)
+                {
+                    sb.Append(module.Quantity.Value).Append(',');
                 }
             }
         }
@@ -690,6 +717,22 @@ public class ShippingLinesManagerWindow : Window
                             ? ModifyLineCmd.ACTION_UNASSIGN_SHIP
                             : ModifyLineCmd.ACTION_ASSIGN_SHIP, selected.Id, capturedShip.Id));
                     });
+                var shipInfo = new Row(2.pt())
+                {
+                    new Icon(ICON_SHIP).Size(20.px(), Px.Auto),
+                    new Column(1.pt())
+                    {
+                        new Label(ship.GetTitle().AsLoc()).FontBold(),
+                        new Label(Txt.ShipHome(home, assignment))
+                            .Color(Theme.InactiveColor)
+                    }
+                };
+                // Ships carrying cargo show what is aboard; an empty ship shows nothing.
+                UiComponent cargoStrip = buildShipCargoStrip(ship);
+                if (cargoStrip != null)
+                {
+                    shipInfo.Add(cargoStrip);
+                }
                 m_shipsColumn.Add(new Row
                 {
                     (Action<Row>)delegate(Row c)
@@ -699,16 +742,7 @@ public class ShippingLinesManagerWindow : Window
                             .Background(STOP_ROW_BG).Border(1.px(), STOP_ROW_BORDER, 5)
                             .Padding(6, left: 2.pt(), right: 2.pt());
                     },
-                    new Row(2.pt())
-                    {
-                        new Icon(ICON_SHIP).Size(20.px(), Px.Auto),
-                        new Column(1.pt())
-                        {
-                            new Label(ship.GetTitle().AsLoc()).FontBold(),
-                            new Label(Txt.ShipHome(home, assignment))
-                                .Color(Theme.InactiveColor)
-                        }
-                    },
+                    shipInfo,
                     new Row(1.pt())
                     {
                         focusShipBtn,
@@ -723,6 +757,55 @@ public class ShippingLinesManagerWindow : Window
         {
             updater();
         }
+    }
+
+    /// <summary>
+    /// A row of the ship's cargo module icons with the stored amount as an ABSOLUTE quantity
+    /// (a stop's modules show a fill percentage instead — for a ship what matters is how much
+    /// cargo is actually aboard, not how full it is). Live-updated in place via
+    /// <see cref="m_fillUpdaters"/>, with the exact amount and capacity in the tooltip. Null
+    /// when the ship has no cargo modules carrying a product.
+    /// </summary>
+    private UiComponent buildShipCargoStrip(CargoShipV2 ship)
+    {
+        Row strip = null;
+        for (int i = 0; i < ship.Modules.Count; i++)
+        {
+            CargoShipModule module = ship.Modules[i].ValueOrNull;
+            ProductProto product = module?.StoredProduct.ValueOrNull;
+            if (module == null || product == null)
+            {
+                continue;
+            }
+            CargoShipModule capturedModule = module;
+            var icon = new Icon().Size(16.px(), Px.Auto);
+            icon.Value(((IProtoWithIcon)product).SomeOption());
+            var amountLabel = new Label().Color(Theme.InactiveColor);
+            var cell = new Row(1.pt())
+            {
+                (Action<Row>)delegate(Row c)
+                {
+                    c.AlignItemsCenter();
+                },
+                icon,
+                amountLabel
+            };
+            string productName = product.Strings.Name.TranslatedString;
+            m_fillUpdaters.Add(delegate
+            {
+                ((IComponentWithText)amountLabel).SetValue(
+                    capturedModule.Quantity.Value.ToString().AsLoc());
+                cell.Tooltip(Txt.ModuleFill(productName, capturedModule.Quantity.Value,
+                    capturedModule.Capacity.Value));
+            });
+            if (strip == null)
+            {
+                strip = new Row(2.pt());
+                strip.AlignItemsCenter();
+            }
+            strip.Add(cell);
+        }
+        return strip;
     }
 
     /// <summary>
