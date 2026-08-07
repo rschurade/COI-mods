@@ -54,6 +54,24 @@ internal static class LocalShipProviderPatch
         }
     }
 
+    /// <summary>The ship's local job provider, or null. Diagnostics only — see
+    /// <see cref="Diag"/>.</summary>
+    internal static LocalShipJobProvider TryGetProviderOf(CargoShipV2 ship)
+    {
+        if (ship == null || s_jobProviderField == null)
+        {
+            return null;
+        }
+        try
+        {
+            return s_jobProviderField.GetValue(ship) as LocalShipJobProvider;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     private static bool UpdateJobProviderPrefix(CargoShipV2 __instance)
     {
         try

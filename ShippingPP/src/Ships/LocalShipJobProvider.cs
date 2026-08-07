@@ -88,6 +88,25 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         return ShippingManager.IsLocalShip(m_ship);
     }
 
+    /// <summary>Current target entity id, or null. Diagnostics only — see <see cref="Diag"/>.
+    /// </summary>
+    internal string TargetIdForDiag => m_target?.Id.ToString();
+
+    /// <summary>Compact dump of the decision state. Diagnostics only — see <see cref="Diag"/>.
+    /// </summary>
+    internal string DebugState()
+    {
+        string target = "none";
+        if (m_target != null)
+        {
+            target = m_target.IsDestroyed
+                ? $"{m_target.Id}(destroyed)" : m_target.Id.ToString();
+        }
+        return $"target={target}, lineStop={m_lineStopIndex}, idleTicks={m_idleTicks}, "
+            + $"fuelPaid={m_legFuelPaid}, lowFuel={m_lowFuel}, "
+            + $"anchorSlot={m_anchorSlot}@{m_anchorTerminalId}";
+    }
+
     public void SimUpdate()
     {
         if (m_ship.HasJobs)

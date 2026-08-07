@@ -561,6 +561,12 @@ public class ShippingManager
         pruneQueues();
         if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked)
         {
+            if (Diag.ENABLED)
+            {
+                Diag.DockDecision(terminal, ship, "DENIED terminal unusable "
+                    + $"(destroyed={terminal.IsDestroyed}, built={terminal.IsConstructed}, "
+                    + $"blocked={terminal.IsAccessBlocked})");
+            }
             return false;
         }
         // An active berth promise beats everything: the grantee keeps its claim (regardless of
@@ -568,7 +574,24 @@ public class ShippingManager
         // long as the promise stands (stale promises are cleaned up by pruneQueues).
         if (m_berthGrants.TryGetValue(terminal, out CargoShipV2 grantee))
         {
-            return grantee == ship && !isDockOccupiedByOther(terminal, ship);
+            if (grantee != ship)
+            {
+                if (Diag.ENABLED)
+                {
+                    Diag.DockDecision(terminal, ship, $"DENIED berth promised to ship {grantee.Id}"
+                        + $" (that ship: docked={(grantee.DockedAt.HasValue ? grantee.DockedAt.Value.Id.ToString() : "none")}, "
+                        + $"jobs={grantee.HasJobs}, navFails={grantee.NavigationFailedStreak})");
+                }
+                return false;
+            }
+            CargoShipV2 blocker = dockOccupant(terminal, ship);
+            if (Diag.ENABLED)
+            {
+                Diag.DockDecision(terminal, ship, blocker == null
+                    ? "GRANTED (holds the berth promise)"
+                    : $"DENIED own promise but ship {blocker.Id} is still docked here");
+            }
+            return blocker == null;
         }
         Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
         int index = indexIn(queue, ship);
@@ -576,16 +599,29 @@ public class ShippingManager
         {
             if (queue != null && queue.Count > MAX_WAITING_PER_DOCK)
             {
+                if (Diag.ENABLED)
+                {
+                    Diag.DockDecision(terminal, ship, $"DENIED queue full ({queue.Count} waiting,"
+                        + $" max {MAX_WAITING_PER_DOCK + 1}) — not even queued");
+                }
                 return false; // Queue full — cannot even wait here.
             }
             queue = queueFor(terminal, create: true);
             queue.Add(ship);
             index = queue.Count - 1;
         }
-        bool granted = index == 0 && !isDockOccupiedByOther(terminal, ship);
+        CargoShipV2 occupant = dockOccupant(terminal, ship);
+        bool granted = index == 0 && occupant == null;
         if (granted)
         {
             m_berthGrants[terminal] = ship;
+        }
+        if (Diag.ENABLED)
+        {
+            Diag.DockDecision(terminal, ship, granted
+                ? "GRANTED (queue head, dock free)"
+                : $"DENIED queue index {index} of {queue.Count}"
+                    + (occupant != null ? $", ship {occupant.Id} docked here" : ", dock free"));
         }
         return granted;
     }
@@ -732,14 +768,21 @@ public class ShippingManager
 
     private bool isDockOccupiedByOther(CargoDepot terminal, CargoShipV2 ship)
     {
+        return dockOccupant(terminal, ship) != null;
+    }
+
+    /// <summary>The local ship docked at the terminal other than <paramref name="ship"/>, or
+    /// null. Pass a null ship to ask "is any local ship docked here".</summary>
+    private CargoShipV2 dockOccupant(CargoDepot terminal, CargoShipV2 ship)
+    {
         foreach (CargoShipV2 localShip in m_localShips)
         {
             if (localShip != ship && localShip.DockedAt.ValueOrNull == terminal)
             {
-                return true;
+                return localShip;
             }
         }
-        return false;
+        return null;
     }
 
     // ------------------------------------------------------------ network dispatch
@@ -936,6 +979,10 @@ public class ShippingManager
         if (++m_tickCounter % SCAN_PERIOD_TICKS == 0)
         {
             checkSimReplacementRuns();
+            if (Diag.ENABLED)
+            {
+                diagSampleState();
+            }
             vacateVanillaShipSlots();
             completePendingFuelSwitches();
             updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
@@ -970,6 +1017,85 @@ public class ShippingManager
                 Terminals.TerminalPoolPatch.LogSimUpdatePatchOwners();
                 return;
             }
+        }
+    }
+
+    // All diagnostic counters count UP from the default 0: a ShippingManager restored from a
+    // save is constructed WITHOUT running field initializers (the blob reader fills the fields
+    // itself), so any "remaining budget" style field would start at 0 and disable the dump.
+    private int m_diagScans;
+    private int m_diagDumps;
+    private int m_diagUnchanged;
+    private string m_diagSignature;
+
+    /// <summary>
+    /// Samples every terminal's berth state (who is docked, who holds the berth promise, who is
+    /// queued) and every local ship's decision state. The full dump is written only when that
+    /// state actually CHANGES, so a session of any length stays readable and a stalled fleet
+    /// shows up as the last dump followed by "unchanged" heartbeats. See <see cref="Diag"/>.
+    /// </summary>
+    private void diagSampleState()
+    {
+        Diag.Announce();
+        if (m_diagDumps >= Diag.MAX_DUMPS || ++m_diagScans < Diag.PERIOD_SCANS)
+        {
+            return;
+        }
+        m_diagScans = 0;
+
+        var terminalLines = new Lyst<string>();
+        string signature = "";
+        foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
+        {
+            if (terminal.IsDestroyed)
+            {
+                continue;
+            }
+            CargoShipV2 occupant = dockOccupant(terminal, null);
+            string docked = occupant != null ? occupant.Id.ToString() : "none";
+            string grant = m_berthGrants.TryGetValue(terminal, out CargoShipV2 grantee)
+                ? grantee.Id.ToString() : "none";
+            string waiting = "";
+            Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
+            if (queue != null)
+            {
+                for (int i = 0; i < queue.Count; i++)
+                {
+                    waiting += (waiting.Length == 0 ? "" : ",") + queue[i].Id;
+                }
+            }
+            signature += $"T{terminal.Id}:{docked}/{grant}/[{waiting}];";
+            terminalLines.Add($"terminal {terminal.Id}: built={terminal.IsConstructed}, "
+                + $"blocked={terminal.IsAccessBlocked}, dockedShip={docked}, "
+                + $"vanillaSlot={(terminal.CargoShip.HasValue ? terminal.CargoShip.Value.Id.ToString() : "none")}, "
+                + $"grant={grant}, queue=[{waiting}]");
+        }
+        foreach (CargoShipV2 ship in m_localShips)
+        {
+            signature += Diag.ShipSignature(ship);
+        }
+
+        if (signature == m_diagSignature)
+        {
+            if (++m_diagUnchanged % Diag.HEARTBEAT_SAMPLES == 0)
+            {
+                Diag.Write($"state unchanged for {m_diagUnchanged} samples "
+                    + $"({m_diagUnchanged * Diag.PERIOD_SCANS * SCAN_PERIOD_TICKS} ticks) — "
+                    + "see the dump above for the stuck state.");
+            }
+            return;
+        }
+        m_diagSignature = signature;
+        m_diagUnchanged = 0;
+        m_diagDumps++;
+        foreach (string line in terminalLines)
+        {
+            Diag.Write(line);
+        }
+        foreach (CargoShipV2 ship in m_localShips)
+        {
+            Diag.Write(Diag.DescribeShip(ship,
+                m_shipLines.TryGetValue(ship, out int lineId) ? lineId.ToString() : "none"));
         }
     }
 
