@@ -227,31 +227,56 @@ public sealed class ShippingLine
         if (version >= 2)
         {
             // v2..v4 stored the stops in one list and (from v4) the rules in a second,
-            // index-parallel one. Zip them back together; a stop with no stored rule keeps the
-            // default, which is how it behaved.
-            Lyst<StaticEntity> stops = Lyst<StaticEntity>.Deserialize(reader);
-            var rules = new Lyst<StopRule>();
+            // index-parallel one. Both are zipped back together in initStopsAfterLoad -- NOT
+            // here: Lyst<T>.Deserialize hands back an EMPTY list and enqueues the fill for
+            // later, so reading Count now yields 0 and would silently drop every stop.
+            m_loadedStops = Lyst<StaticEntity>.Deserialize(reader);
+            m_loadedRules = new Lyst<StopRule>();
             if (version >= 4)
             {
                 int ruleCount = reader.ReadInt();
                 for (int i = 0; i < ruleCount; i++)
                 {
-                    rules.Add(new StopRule((StopWait)reader.ReadInt(),
+                    m_loadedRules.Add(new StopRule((StopWait)reader.ReadInt(),
                         reader.ReadInt(), reader.ReadInt()));
                 }
             }
-            for (int i = 0; i < stops.Count; i++)
-            {
-                m_stops.Add(new LineStop(stops[i],
-                    i < rules.Count ? rules[i] : StopRule.Default));
-            }
+            reader.RegisterInitAfterLoad(this, nameof(initStopsAfterLoad), InitPriority.Normal);
             return;
         }
-        // v1 stored the stops as Lyst<CargoDepot> (different wire format).
-        Lyst<CargoDepot> old = Lyst<CargoDepot>.Deserialize(reader);
-        foreach (CargoDepot stop in old)
+        // v1 stored the stops as Lyst<CargoDepot> (different wire format), and is deferred for
+        // the same reason.
+        m_loadedLegacyStops = Lyst<CargoDepot>.Deserialize(reader);
+        reader.RegisterInitAfterLoad(this, nameof(initStopsAfterLoad), InitPriority.Normal);
+    }
+
+    /// <summary>Stops loaded from a pre-v5 save, parked until their list has actually been
+    /// filled (see <see cref="DeserializeData"/>).</summary>
+    private Lyst<StaticEntity> m_loadedStops;
+    private Lyst<StopRule> m_loadedRules;
+    private Lyst<CargoDepot> m_loadedLegacyStops;
+
+    /// <summary>Rebuilds the stop list from a pre-v5 save once the parked lists are populated.
+    /// </summary>
+    private void initStopsAfterLoad()
+    {
+        if (m_loadedStops != null)
         {
-            m_stops.Add(new LineStop(stop, StopRule.Default));
+            for (int i = 0; i < m_loadedStops.Count; i++)
+            {
+                m_stops.Add(new LineStop(m_loadedStops[i],
+                    i < m_loadedRules.Count ? m_loadedRules[i] : StopRule.Default));
+            }
         }
+        if (m_loadedLegacyStops != null)
+        {
+            foreach (CargoDepot stop in m_loadedLegacyStops)
+            {
+                m_stops.Add(new LineStop(stop, StopRule.Default));
+            }
+        }
+        m_loadedStops = null;
+        m_loadedRules = null;
+        m_loadedLegacyStops = null;
     }
 }
