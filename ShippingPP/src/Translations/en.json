@@ -1,11 +1,11 @@
-[
+﻿[
 	["ShippingPP__LocalTerminal_Name_Fmt", "Local cargo terminal ({0})"],
 	["ShippingPP__LocalTerminal_Desc_Fmt", "A cargo terminal with {0} module slots for local shipping: its ships carry products to and from other local cargo terminals on this island instead of trading with the world. Terminal modules set to export offer their product to the network; modules set to import request it. Ships are built on site from delivered materials and match the terminal's size ({0} cargo modules); any local ship can dock here regardless of its size."],
 	["ShippingPP__Notif_ShipHasNoHomePort", "Cargo ship has no home port"],
 	["ShippingPP__NavBuoy_Name", "Navigation buoy"],
 	["ShippingPP__NavBuoy_Desc", "A route marker for shipping lines: add it as a stop in the shipping lines manager and line ships will sail past it on their way to the next stop — useful to route ships around islands or through wide channels. Ships aim near the buoy, not at it."],
 	["ShippingPP__LinesManager_Title", "Shipping lines"],
-	["ShippingPP__LinesManager_DeleteLine_Tooltip", "Delete the selected line. Assigned ships return to automatic dispatch."],
+	["ShippingPP__LinesManager_DeleteLine_Tooltip", "Delete the selected line. Its ships become idle until assigned to another line."],
 	["ShippingPP__LinesManager_NewLine_Tooltip", "Create a new shipping line."],
 	["ShippingPP__LinesManager_LineColor_Tooltip", "Line color"],
 	["ShippingPP__LinesManager_NoStops", "No stops yet — add local terminals and navigation buoys."],
@@ -16,7 +16,7 @@
 	["ShippingPP__LinesManager_NoRoute", "A line needs at least two local terminal stops."],
 	["ShippingPP__LinesManager_NoRoute_Tooltip", "Ships sail the stops in order and only exchange cargo at local terminals; buoys are waypoints. With fewer than two terminals the line's ships have no route to sail."],
 	["ShippingPP__LinesManager_RemoveStop_Tooltip", "Remove this stop from the line"],
-	["ShippingPP__LinesManager_ShipAutoDispatch", "automatic dispatch"],
+	["ShippingPP__LinesManager_ShipAutoDispatch", "no line — idle"],
 	["ShippingPP__LinesManager_ShipOnThisLine", "on this line"],
 	["ShippingPP__LinesManager_ModuleOffers", "This module offers its product (export)."],
 	["ShippingPP__LinesManager_ModuleRequests", "This module requests its product (import)."],
@@ -54,8 +54,8 @@
 	["ShippingPP__ShipStatus_LowFuel", "Not enough fuel for the next trip"],
 	["ShippingPP__ShipStatus_WaitingForFuel_Fmt", "Out of fuel — holding the berth until {0} is delivered here"],
 	["ShippingPP__ShipStatus_TransferringCargo", "Transferring cargo"],
-	["ShippingPP__ShipStatus_LineUnusable", "Assigned line has no usable route — add at least two terminal stops to the line, or unassign the ship to resume automatic dispatch."],
-	["ShippingPP__ShipStatus_Idle", "Serving local terminals"],
+	["ShippingPP__ShipStatus_LineUnusable", "Assigned line has no usable route — add at least two terminal stops to the line."],
+	["ShippingPP__ShipStatus_Idle", "Not assigned to a line — assign it in the shipping lines window to put it to work"],
 	["ShippingPP__ShipStatus_WaitingForBerth_Fmt", "Waiting for a free berth at {0}"],
 	["ShippingPP__ShipStatus_OnLine_Fmt", "On line \"{0}\""]
 ]

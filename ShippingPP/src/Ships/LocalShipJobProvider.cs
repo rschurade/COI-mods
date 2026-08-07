@@ -135,20 +135,18 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
-        // A line-assigned ship whose line has no usable route does NOT fall back to network
-        // dispatch — the assignment is explicit player intent, so it finishes its current leg
-        // and then idles (with a warning status) until the line gets two terminal stops or the
-        // ship is unassigned.
+        // A line is what puts a ship to work: there is no automatic dispatch to fall back on, so
+        // a ship with no assignment (or one whose line has no usable route) is simply out of
+        // service. It finishes nothing on its own, keeps no claims, and says so in its status
+        // until the player assigns it to a line with at least two terminal stops.
         Lines.ShippingLine line = null;
-        bool lineUnusable = false;
         int? lineId = manager.GetLineIdFor(m_ship);
         if (lineId.HasValue)
         {
             line = manager.TryGetLine(lineId.Value);
-            if (line == null || !line.HasUsableStops)
+            if (line != null && !line.HasUsableStops)
             {
                 line = null;
-                lineUnusable = true;
             }
         }
 
@@ -197,39 +195,16 @@ public class LocalShipJobProvider : ICargoShipJobProvider
                 }
                 return;
             }
-            // No target: idle on the water. Take a trade job directly from the anchor; queue
-            // for the home berth only when it is actually needed (cargo to unload, fuel to
-            // top up, or already queued) — an empty idle ship parks at the anchor instead of
-            // fighting its docked sibling for the berth.
+            // No target: idle on the water. Queue for the home berth only when it is actually
+            // needed (cargo to unload, or fuel to top up) — an out-of-service ship parks at the
+            // anchor instead of fighting a working sibling for the berth.
             if (home == null || home.IsDestroyed || home.IsAccessBlocked)
             {
                 return;
             }
-            bool needsBerth = shipHasAnyCargo() || m_lowFuel
-                || manager.GetQueueIndex(home, m_ship) >= 0;
-            if (!needsBerth)
+            if (!shipHasAnyCargo() && !m_lowFuel)
             {
-                CargoDepot job = lineUnusable ? null : manager.FindTradeTargetFor(m_ship);
-                if (job != null)
-                {
-                    if (!tryConsumeLegFuel())
-                    {
-                        manager.ReleaseDockClaim(m_ship);
-                        return;
-                    }
-                    m_target = job;
-                    m_legFuelPaid = true;
-                    m_idleTicks = 0;
-                    if (manager.TryReserveDock(job, m_ship))
-                    {
-                        m_ship.NavigateToDock(job);
-                    }
-                    else
-                    {
-                        holdNear(job, manager);
-                    }
-                    return;
-                }
+                manager.ReleaseDockClaim(m_ship);
                 holdNear(home, manager); // Park at the home anchor without claiming the berth.
                 return;
             }
@@ -326,34 +301,12 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
 
-        // At home (or home is gone): ask the dispatcher for the next worthwhile trip. A ship
-        // whose assigned line is unusable stays put (yielding the berth below if needed).
-        CargoDepot next = lineUnusable ? null : manager.FindTradeTargetFor(m_ship);
-        if (next != null)
+        // At home with no line to serve: out of service. Yield the berth if another ship wants
+        // it (a free hop) and park at the anchor — the idle logic only re-docks when there is a
+        // reason to, so out-of-service siblings never ping-pong the berth between them.
+        manager.ReleaseDockClaim(m_ship);
+        if (manager.DockHasWaiters(dockedAt, m_ship))
         {
-            if (!tryConsumeLegFuel())
-            {
-                manager.ReleaseDockClaim(m_ship);
-                return;
-            }
-            m_target = next;
-            m_legFuelPaid = true;
-            m_idleTicks = 0;
-            if (manager.TryReserveDock(next, m_ship))
-            {
-                m_ship.NavigateToDock(next);
-            }
-            else
-            {
-                holdNear(next, manager);
-            }
-        }
-        else if (manager.DockHasWaiters(dockedAt, m_ship))
-        {
-            // Nothing to do while another ship waits for this berth: yield it (free hop) and
-            // become an idle parker at the anchor — the idle logic re-docks or re-dispatches
-            // the ship only when there is a reason to, so idle siblings never ping-pong the
-            // berth between them.
             m_idleTicks = 0;
             holdNear(dockedAt, manager);
         }
@@ -704,6 +657,8 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             }
             return Txt.ShipStatus_OnLine(line.Name);
         }
+        // No line, no work: there is no automatic dispatch to fall back on.
+        state = StateForUi.Warning;
         return Txt.ShipStatus_Idle;
     }
 

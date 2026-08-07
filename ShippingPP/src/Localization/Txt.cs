@@ -1,4 +1,4 @@
-using Mafi.Localization;
+﻿using Mafi.Localization;
 
 namespace ShippingPP;
 
@@ -24,7 +24,7 @@ internal static class Txt
 
     public static readonly LocStrFormatted LinesManager_DeleteLine_Tooltip =
         str("LinesManager_DeleteLine_Tooltip",
-            "Delete the selected line. Assigned ships return to automatic dispatch.");
+            "Delete the selected line. Its ships become idle until assigned to another line.");
 
     public static readonly LocStrFormatted LinesManager_NewLine_Tooltip =
         str("LinesManager_NewLine_Tooltip", "Create a new shipping line.");
@@ -65,7 +65,7 @@ internal static class Txt
 
     /// <summary>Second half of <see cref="LinesManager_ShipHome"/> for an unassigned ship.</summary>
     public static readonly LocStrFormatted LinesManager_ShipAutoDispatch =
-        str("LinesManager_ShipAutoDispatch", "automatic dispatch");
+        str("LinesManager_ShipAutoDispatch", "no line — idle");
 
     /// <summary>Second half of <see cref="LinesManager_ShipHome"/> for a ship of the shown line.</summary>
     public static readonly LocStrFormatted LinesManager_ShipOnThisLine =
@@ -259,11 +259,11 @@ internal static class Txt
 
     public static readonly LocStrFormatted ShipStatus_LineUnusable =
         str("ShipStatus_LineUnusable",
-            "Assigned line has no usable route — add at least two terminal stops to the line, "
-            + "or unassign the ship to resume automatic dispatch.");
+            "Assigned line has no usable route — add at least two terminal stops to the line.");
 
     public static readonly LocStrFormatted ShipStatus_Idle =
-        str("ShipStatus_Idle", "Serving local terminals");
+        str("ShipStatus_Idle",
+            "Not assigned to a line — assign it in the shipping lines window to put it to work");
 
     private static readonly string s_waitingForBerth =
         text("ShipStatus_WaitingForBerth_Fmt", "Waiting for a free berth at {0}");

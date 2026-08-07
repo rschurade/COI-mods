@@ -104,8 +104,10 @@ public class ShippingManager
     /// free), the rest hold at anchor outside the harbor. Entries are removed on arrival,
     /// on retarget (<see cref="ReleaseDockClaim"/>) and when ships/terminals die.</summary>
     private readonly Dict<CargoDepot, Lyst<CargoShipV2>> m_dockQueues;
-    /// <summary>What each dispatched ship intends to fetch/deliver at its target — subtracted
-    /// from other ships' dispatch evaluations so two ships never sail for the same cargo.</summary>
+    /// <summary>Obsolete since automatic dispatch was removed: nothing creates cargo plans any
+    /// more, because a ship's route is its line. Kept (always empty) so saves written by earlier
+    /// versions still load without a format migration; remove it the next time the save format
+    /// changes for another reason.</summary>
     private readonly Dict<CargoShipV2, CargoPlan> m_cargoPlans;
     /// <summary>The one ship per dock that currently holds the berth promise (granted but not
     /// yet docked). While a grant is active every other ship is denied, no matter how the
@@ -119,7 +121,9 @@ public class ShippingManager
     /// train semantics: an import module requests while filled below the threshold, an export
     /// module offers while filled above (100 - threshold).</summary>
     private readonly Dict<CargoDepotModule, int> m_moduleThresholds;
-    /// <summary>Tick each terminal was last chosen as a dispatch target (round-robin fairness).</summary>
+    /// <summary>Obsolete since automatic dispatch was removed (it kept dispatch round-robin
+    /// fair). Kept, always empty, for the same save-compatibility reason as
+    /// <see cref="m_cargoPlans"/>.</summary>
     private readonly Dict<CargoDepot, int> m_lastServed;
     /// <summary>Player-defined shipping lines (ordered cyclic stop lists).</summary>
     private readonly Lyst<Lines.ShippingLine> m_lines;
@@ -793,194 +797,6 @@ public class ShippingManager
             }
         }
         return null;
-    }
-
-    // ------------------------------------------------------------ network dispatch
-
-    /// <summary>
-    /// The dispatcher: picks the most valuable terminal for the given ship to visit, or null.
-    /// Value of a visit = products the ship could deliver there (ship cargo × the terminal's
-    /// import modules' free capacity) plus products it could fetch (the terminal's export
-    /// modules' stock × the ship's free module capacity for that product) — both reduced by
-    /// what OTHER dispatched ships already plan to fetch/deliver there, so cargo is never
-    /// promised twice. Terminals qualify while their dock queue has room; the ship joins the
-    /// chosen dock's queue and its planned quantities are recorded as its cargo plan.
-    /// </summary>
-    public CargoDepot FindTradeTargetFor(CargoShipV2 ship)
-    {
-        pruneQueues();
-
-        // Min-load gate: the trip must move at least MIN_LOAD_PERCENT of the ship's capacity —
-        // unless the target can absorb the ship's whole current cargo (never strand goods).
-        Quantity shipCapacityTotal = Quantity.Zero;
-        Quantity shipCargoTotal = Quantity.Zero;
-        for (int i = 0; i < ship.Modules.Count; i++)
-        {
-            CargoShipModule module = ship.Modules[i].ValueOrNull;
-            if (module != null)
-            {
-                shipCapacityTotal += module.Capacity;
-                shipCargoTotal += module.Quantity;
-            }
-        }
-        int minTripValue = shipCapacityTotal.Value * MIN_LOAD_PERCENT / 100;
-
-        var candidates = new Lyst<KeyValuePair<CargoDepot, int>>();
-        var candidatePlans = new Dict<CargoDepot, CargoPlan>();
-        int bestValue = 0;
-        foreach (LocalTerminal terminal in m_entitiesManager.GetAllEntitiesOfType<LocalTerminal>())
-        {
-            if (terminal.IsDestroyed || !terminal.IsConstructed || terminal.IsAccessBlocked
-                || ship.DockedAt.ValueOrNull == terminal)
-            {
-                continue;
-            }
-            Lyst<CargoShipV2> queue = queueFor(terminal, create: false);
-            if (queue != null && indexIn(queue, ship) < 0 && queue.Count > MAX_WAITING_PER_DOCK)
-            {
-                continue; // Dock queue full.
-            }
-
-            int value = 0;
-            Quantity deliverable = Quantity.Zero;
-            var plan = new CargoPlan(terminal);
-            foreach (Option<CargoDepotModule> slot in terminal.Modules)
-            {
-                CargoDepotModule module = slot.ValueOrNull;
-                if (module == null || module.StoredProduct.IsNone || !module.IsEnabled)
-                {
-                    continue;
-                }
-                ProductProto product = module.StoredProduct.Value;
-                int fillPercent = module.Capacity.IsPositive
-                    ? module.CurrentQuantity.Value * 100 / module.Capacity.Value
-                    : 0;
-                int threshold = GetModuleThreshold(module);
-                if (IsExportModule(module))
-                {
-                    // The terminal offers: worth fetching, while filled above (100 - threshold).
-                    if (fillPercent > 100 - threshold)
-                    {
-                        Quantity stock = moduleStock(module)
-                            - plannedByOthers(ship, terminal, product, fetch: true);
-                        Quantity q = shipFreeCapacityFor(ship, product).Min(stock);
-                        if (q.IsPositive)
-                        {
-                            value += q.Value;
-                            plan.AddFetch(product, q);
-                        }
-                    }
-                }
-                else
-                {
-                    // The terminal requests: worth delivering, while filled below the threshold.
-                    if (fillPercent < threshold)
-                    {
-                        Quantity room = module.UsableCapacity
-                            - plannedByOthers(ship, terminal, product, fetch: false);
-                        Quantity d = shipQuantityOf(ship, product).Min(room);
-                        if (d.IsPositive)
-                        {
-                            value += d.Value;
-                            deliverable += d;
-                            plan.AddDeliver(product, d);
-                        }
-                    }
-                }
-            }
-            if (value <= 0)
-            {
-                continue;
-            }
-            bool fullDump = shipCargoTotal.IsPositive && deliverable >= shipCargoTotal;
-            if (value < minTripValue && !fullDump)
-            {
-                continue;
-            }
-            candidates.Add(new KeyValuePair<CargoDepot, int>(terminal, value));
-            candidatePlans[terminal] = plan;
-            bestValue = bestValue.Max(value);
-        }
-
-        // Among candidates close to the best value (within 20%), prefer the least recently
-        // served terminal so equal requesters take turns instead of starving.
-        CargoDepot best = null;
-        int bestLastServed = int.MaxValue;
-        foreach (KeyValuePair<CargoDepot, int> candidate in candidates)
-        {
-            if (candidate.Value * 5 < bestValue * 4)
-            {
-                continue;
-            }
-            int lastServed = m_lastServed.TryGetValue(candidate.Key, out int tick)
-                ? tick : int.MinValue;
-            if (best == null || lastServed < bestLastServed)
-            {
-                best = candidate.Key;
-                bestLastServed = lastServed;
-            }
-        }
-        if (best != null)
-        {
-            m_lastServed[best] = m_tickCounter;
-            // The caller joins the dock queue via TryReserveDock; the dispatcher itself never
-            // touches queues (releasing/rejoining here would churn the queue order).
-            m_cargoPlans[ship] = candidatePlans[best];
-        }
-        else
-        {
-            m_cargoPlans.Remove(ship);
-        }
-        return best;
-    }
-
-    /// <summary>Sum other dispatched ships already plan to fetch from (or deliver to) the
-    /// terminal for this product.</summary>
-    private Quantity plannedByOthers(CargoShipV2 ship, CargoDepot terminal, ProductProto product,
-        bool fetch)
-    {
-        Quantity total = Quantity.Zero;
-        foreach (KeyValuePair<CargoShipV2, CargoPlan> pair in m_cargoPlans)
-        {
-            if (pair.Key != ship && pair.Value.Terminal == terminal)
-            {
-                total += fetch ? pair.Value.FetchOf(product) : pair.Value.DeliverOf(product);
-            }
-        }
-        return total;
-    }
-
-    private static Quantity moduleStock(CargoDepotModule module)
-    {
-        return module.CurrentQuantity;
-    }
-
-    private static Quantity shipQuantityOf(CargoShipV2 ship, ProductProto product)
-    {
-        Quantity total = Quantity.Zero;
-        for (int i = 0; i < ship.Modules.Count; i++)
-        {
-            CargoShipModule module = ship.Modules[i].ValueOrNull;
-            if (module != null && module.StoredProduct.ValueOrNull == product)
-            {
-                total += module.Quantity;
-            }
-        }
-        return total;
-    }
-
-    private static Quantity shipFreeCapacityFor(CargoShipV2 ship, ProductProto product)
-    {
-        Quantity total = Quantity.Zero;
-        for (int i = 0; i < ship.Modules.Count; i++)
-        {
-            CargoShipModule module = ship.Modules[i].ValueOrNull;
-            if (module != null && module.StoredProduct.ValueOrNull == product)
-            {
-                total += module.UsableCapacity;
-            }
-        }
-        return total;
     }
 
     private void update()
