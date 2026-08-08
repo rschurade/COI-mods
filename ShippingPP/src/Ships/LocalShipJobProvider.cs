@@ -726,6 +726,11 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             ? Percent.Hundred / CargoShipV2.SAVER_TRAVEL_DURATION_MULT
             : Percent.Hundred;
         s_setSpeedFactor.Invoke(m_ship, new object[] { factor });
+        if (Diag.ENABLED)
+        {
+            Diag.Write($"ship {m_ship.Id}: leg speed factor {factor} "
+                + $"(saver={m_ship.IsFuelReductionEnabled}, lowFuel={m_lowFuel})");
+        }
     }
 
     /// <summary>Whether the tank covers the next leg, WITHOUT charging for it.</summary>
@@ -751,6 +756,12 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         if (buffer is Mafi.Core.Entities.Static.ProductBuffer fuelBuffer)
         {
             fuelBuffer.RemoveAsMuchAs(needed);
+        }
+        if (Diag.ENABLED)
+        {
+            Diag.Write($"ship {m_ship.Id}: leg fuel {needed.Value} charged "
+                + $"(saver={m_ship.IsFuelReductionEnabled}), tank now "
+                + $"{m_ship.FuelBuffer.Quantity.Value}");
         }
         m_lowFuel = false;
         return true;
