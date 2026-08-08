@@ -1,6 +1,38 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.0
+------
+Ships in line colors:
+- Ships are painted in the color of their shipping line, like trains:
+  the white parts of the model (superstructure, railings) take the
+  line color, the hull and deck stay as they are.
+- Each line has an "Apply line color to ships" checkbox next to its
+  color in the lines manager (the ship equivalent of the vanilla
+  train-line setting). Enabled by default; unchecking restores the
+  vanilla look immediately.
+
+Fuel saver:
+- The ship window's "Reduce ship speed & save fuel" checkbox now
+  works for local ships, with the vanilla trade-off: 30% less fuel
+  per journey at half sailing speed, applied from the next departure.
+  A ship running dry also makes its emergency run home at half speed,
+  like vanilla ships do.
+
+Fixes:
+- Ships no longer wait at anchor for a berth that is visibly free. A
+  ship that docked and departed could leave a stale queue entry and
+  berth promise behind, which then blocked the dock for every other
+  ship until the owner came round the line again.
+- A ship refueled after running dry no longer keeps reporting
+  "Waiting for fuel" through its whole (possibly rule-extended) stay
+  at the dock — and no longer keeps that stale status across
+  save/load.
+- The ship window no longer shows the vanilla "Available to pick up"
+  panel (world-mine quantities) or the per-journey fuel footer
+  ("0 / per a single journey, Round trip duration: ?") for local
+  ships; neither ever applied to them. Vanilla world ships keep both.
+
 v0.5.0
 ------
 Verified against game version 0.8.7.
