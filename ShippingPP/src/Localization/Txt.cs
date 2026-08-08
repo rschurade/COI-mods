@@ -204,12 +204,6 @@ internal static class Txt
             + "product — docked ships are unloaded into it and trucks distribute the goods to "
             + "your factory.");
 
-    public static readonly LocStrFormatted Terminal_Threshold_Tooltip =
-        str("Terminal_Threshold_Tooltip",
-            "Network threshold: an import module requests cargo only while filled below this, "
-            + "an export module offers only while filled above (100 % minus this). "
-            + "100 % = always active.");
-
     public static readonly LocStrFormatted Terminal_Shipping_Title =
         str("Terminal_Shipping_Title", "Shipping");
 

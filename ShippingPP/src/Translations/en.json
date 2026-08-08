@@ -44,7 +44,6 @@
 	["ShippingPP__Terminal_Ships_Tooltip", "Ships built on site from delivered materials, homed at this terminal. Build as many as you like — arrivals queue up and hold at anchor while the dock serves one ship at a time. A ship's cargo modules mirror this terminal's modules, so at least one module must be built before a ship can be laid down; ships gain the remaining modules automatically as more are built on the terminal."],
 	["ShippingPP__Terminal_ModuleExport", "Offer (export)"],
 	["ShippingPP__Terminal_ModuleExport_Tooltip", "On: this module OFFERS its product to the shipping network — trucks fill it from your factory and docked ships are loaded from it. Off: this module REQUESTS its product — docked ships are unloaded into it and trucks distribute the goods to your factory."],
-	["ShippingPP__Terminal_Threshold_Tooltip", "Network threshold: an import module requests cargo only while filled below this, an export module offers only while filled above (100 % minus this). 100 % = always active."],
 	["ShippingPP__Terminal_Shipping_Title", "Shipping"],
 	["ShippingPP__Terminal_Shipping_Tooltip", "Direction of each terminal module. Assign a product in the module's own window first; any product of the module's type can be shipped."],
 	["ShippingPP__Terminal_ShipsCount_Fmt", "Ships: {0}"],

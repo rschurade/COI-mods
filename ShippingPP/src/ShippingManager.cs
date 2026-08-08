@@ -118,9 +118,9 @@ public class ShippingManager
     private readonly Dict<CargoDepot, CargoShipV2> m_berthGrants;
     /// <summary>Terminal modules the player switched to export ("offer") mode; absent = import.</summary>
     private readonly Set<CargoDepotModule> m_exportModules;
-    /// <summary>Per-module network threshold in percent (absent = 100 = always active). Vanilla
-    /// train semantics: an import module requests while filled below the threshold, an export
-    /// module offers while filled above (100 - threshold).</summary>
+    /// <summary>Obsolete: the per-module network threshold of the removed automatic dispatch;
+    /// its dropdown left the terminal window with it. Kept, no longer written, for the same
+    /// save-compatibility reason as <see cref="m_cargoPlans"/>.</summary>
     private readonly Dict<CargoDepotModule, int> m_moduleThresholds;
     /// <summary>Obsolete since automatic dispatch was removed (it kept dispatch round-robin
     /// fair). Kept, always empty, for the same save-compatibility reason as
@@ -214,23 +214,12 @@ public class ShippingManager
         }
     }
 
-    /// <summary>Network threshold in percent (100 = always active, the default).</summary>
-    public int GetModuleThreshold(CargoDepotModule module)
-    {
-        return m_moduleThresholds.TryGetValue(module, out int value) ? value : 100;
-    }
-
+    /// <summary>Obsolete (see <see cref="m_moduleThresholds"/>); only kept because a save may
+    /// contain a queued <see cref="SetModuleThresholdCmd"/>. Values no longer have any effect
+    /// and are no longer stored.</summary>
     public void SetModuleThreshold(CargoDepotModule module, int percent)
     {
-        percent = percent.Clamp(10, 100);
-        if (percent == 100)
-        {
-            m_moduleThresholds.Remove(module);
-        }
-        else
-        {
-            m_moduleThresholds[module] = percent;
-        }
+        m_moduleThresholds.Remove(module);
     }
 
     /// <summary>

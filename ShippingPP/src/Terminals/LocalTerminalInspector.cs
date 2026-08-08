@@ -187,38 +187,10 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
                 ProductProto product = productForRow(i);
                 return product != null && allModulesExport(product);
             });
-            var thresholdDropdown = new Dropdown<int>(
-                (int opt, int idx, bool inDropdown) => new Label($"{opt} %".AsLoc()))
-                .SetOptions(new[] { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 });
-            thresholdDropdown.Tooltip(Txt.Terminal_Threshold_Tooltip);
-            thresholdDropdown.OnValueChanged(delegate(int value, int _)
-            {
-                ProductProto product = productForRow(i);
-                if (product == null)
-                {
-                    return;
-                }
-                foreach (Mafi.Option<CargoDepotModule> slot in Entity.Modules)
-                {
-                    CargoDepotModule module = slot.ValueOrNull;
-                    if (module != null && module.StoredProduct.ValueOrNull == product
-                        && m_shippingManager.GetModuleThreshold(module) != value)
-                    {
-                        ScheduleCommand(new SetModuleThresholdCmd(module.Id, value));
-                    }
-                }
-            });
-            thresholdDropdown.ObserveValueDropdown(delegate
-            {
-                ProductProto product = productForRow(i);
-                CargoDepotModule module = product != null ? firstModuleOf(product) : null;
-                return module != null ? m_shippingManager.GetModuleThreshold(module) : 100;
-            });
             var slotRow = new Row(4.pt())
             {
                 slotIcon,
-                slotToggle,
-                thresholdDropdown
+                slotToggle
             };
             slotsColumn.Add(slotRow);
             this.Observe(delegate
@@ -325,12 +297,6 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             }
         }
         return int.MaxValue;
-    }
-
-    private CargoDepotModule firstModuleOf(ProductProto product)
-    {
-        int index = indexOfProduct(product);
-        return index == int.MaxValue ? null : Entity.Modules[index].ValueOrNull;
     }
 
     /// <summary>Whether every module storing the product is set to export.</summary>
