@@ -122,6 +122,17 @@ public sealed class ShippingPPMod : IMod
             Log.Error($"Shipping++: failed to apply local ship provider patch: {ex.Message}");
         }
 
+        // The ship window's vanilla "Available to pick up" (world mines) panel does not apply
+        // to local ships.
+        try
+        {
+            Ships.WorldCargoPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply world cargo panel patch: {ex.Message}");
+        }
+
         // Ships wear their shipping line's color, like trains do.
         try
         {

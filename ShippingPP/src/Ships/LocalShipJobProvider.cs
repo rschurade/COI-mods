@@ -283,6 +283,10 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             manager.ReleaseDockClaim(m_ship);
             return;
         }
+        // The tank covers the next leg again (the terminal refueled the ship, or the player
+        // refitted it): without this, a ship held docked by a stop rule kept reporting
+        // "waiting for fuel" — the flag was only reset when a leg was actually paid.
+        m_lowFuel = false;
 
         // Line mode: cycle the assigned line's stops.
         if (line != null)
