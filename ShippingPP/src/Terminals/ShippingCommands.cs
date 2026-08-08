@@ -633,6 +633,7 @@ internal class ShippingCommandsProcessor
                 {
                     var palette = Mafi.Core.Trains.TrainLine.COLOR_PALETTE;
                     colored.Color = palette[Math.Abs(cmd.Arg) % palette.Length];
+                    m_shippingManager.PublishShipTints();
                     cmd.SetResultSuccess();
                     return;
                 }

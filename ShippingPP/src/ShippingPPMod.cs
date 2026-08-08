@@ -122,6 +122,16 @@ public sealed class ShippingPPMod : IMod
             Log.Error($"Shipping++: failed to apply local ship provider patch: {ex.Message}");
         }
 
+        // Ships wear their shipping line's color, like trains do.
+        try
+        {
+            Ships.ShipTintPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply ship line-color patch: {ex.Message}");
+        }
+
         // "Home port" panel in the vanilla cargo ship window (shown for local ships only).
         try
         {

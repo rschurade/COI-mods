@@ -538,6 +538,7 @@ public class ShippingManager
         {
             m_shipLines.Remove(ship);
         }
+        PublishShipTints();
     }
 
     /// <summary>The line id the ship is assigned to, or null (= automatic network dispatch).</summary>
@@ -562,6 +563,28 @@ public class ShippingManager
             }
             m_shipLines.Remove(ship);
         }
+        PublishShipTints();
+    }
+
+    /// <summary>
+    /// Publishes a fresh ship→line-color snapshot for the render side (see
+    /// <see cref="Ships.ShipTint"/>). Called whenever an assignment or a line color changes,
+    /// and from the scan tick as an idempotent catch-all (line deleted, ship died, save
+    /// loaded). The snapshot is a new dictionary every time — the render thread reads the
+    /// previous one lock-free while this builds.
+    /// </summary>
+    internal void PublishShipTints()
+    {
+        var colors = new Dictionary<EntityId, Mafi.Core.Trains.TrainColor>();
+        foreach (KeyValuePair<CargoShipV2, int> pair in m_shipLines)
+        {
+            Lines.ShippingLine line = pair.Key.IsDestroyed ? null : TryGetLine(pair.Value);
+            if (line != null)
+            {
+                colors[pair.Key.Id] = line.Color.TrainColor;
+            }
+        }
+        Ships.ShipTint.Publish(colors);
     }
 
     /// <summary>
@@ -816,6 +839,7 @@ public class ShippingManager
             updateOrphanNotifications(); // Before pruning: dead ships' warnings need removal.
             pruneDestroyedShips();
             syncModuleDirections();
+            PublishShipTints();
         }
     }
 
@@ -1511,6 +1535,8 @@ public class ShippingManager
         m_loadedCargoPlans = null;
         m_loadedBerthGrants = null;
         m_loadedOrphanNotifs = null;
+        // Ships are painted from the first frame after loading, not from the first scan tick.
+        PublishShipTints();
     }
 
     /// <summary>A dispatched ship's intended exchange at its target terminal.</summary>
