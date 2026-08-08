@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
 using HarmonyLib;
@@ -40,26 +41,37 @@ internal static class ShipTint
 }
 
 /// <summary>
-/// Applies the line color to a cargo ship's hull. Added to every cargo ship MonoBehaviour by
-/// <see cref="ShipTintPatch"/>; ships without a published color (world ships, local ships with
-/// no line) keep their vanilla look.
+/// Repaints the white parts of a cargo ship (superstructure, railings) in its line color.
+/// Added to every cargo ship MonoBehaviour by <see cref="ShipTintPatch"/>; ships without a
+/// published color (world ships, local ships with no line) keep their vanilla look.
 ///
-/// The color is applied per renderer via <see cref="MaterialPropertyBlock"/> — the same
-/// <c>_Color</c>/<c>_AccentColor</c> properties the game stamps on colorizable train and
-/// billboard materials, but without cloning materials, so clearing the block restores the
-/// vanilla look exactly. Only hull renderers are painted (the front and back prefab, not the
-/// cargo modules), and only mesh renderers (tinting a particle material would color the
-/// exhaust smoke).
+/// The whole hull — front, rear and the hull section under every cargo module — is a single
+/// shared material ('CargoShip', Standard shader, one albedo atlas), so the white parts
+/// cannot be isolated by material or by a shader color property; a whole-material tint
+/// darkens the entire ship. Instead a copy of the albedo texture is baked per line color
+/// with only the near-white, low-saturation texels shifted to the line color (shading
+/// preserved via their brightness); saturated areas — blue hull, red waterline, orange
+/// lifeboats — are untouched. Painted ships get the baked material, everything else keeps
+/// the original: the shared material asset itself is never modified, so vanilla world ships
+/// are unaffected. Bakes are cached per color for the session.
 /// </summary>
 internal sealed class ShipLineTintMb : MonoBehaviour
 {
+    /// <summary>Name of the shared hull material asset ('CargoShip'), the repaint target.
+    /// Everything else on the ship (module containers, cargo piles, particles) keeps its
+    /// own material.</summary>
+    private const string HULL_MATERIAL_NAME = "CargoShip";
+
     private static readonly int COLOR_ID = Shader.PropertyToID("_Color");
     private static readonly int ACCENT_ID = Shader.PropertyToID("_AccentColor");
-    private static MaterialPropertyBlock s_mpb;
+
+    private static Material s_originalMaterial;
+    private static readonly Dict<ulong, Material> s_tintedMaterials = new Dict<ulong, Material>();
     private static bool s_dumped;
 
     private CargoShipV2 m_ship;
-    private Renderer[] m_hullRenderers;
+    private Lyst<Renderer> m_hullRenderers;
+    private int m_collectedChildCount = -1;
     private bool m_hasApplied;
     private TrainColor m_applied;
 
@@ -74,9 +86,12 @@ internal sealed class ShipLineTintMb : MonoBehaviour
         {
             return;
         }
-        if (m_hullRenderers == null)
+        if (transform.childCount != m_collectedChildCount)
         {
+            // First run, or a cargo module was added/removed (each is its own child): the
+            // module's hull section shares the repainted material, so recollect and reapply.
             collectHullRenderers();
+            m_hasApplied = false;
         }
         if (ShipTint.TryGet(m_ship.Id, out TrainColor color))
         {
@@ -91,38 +106,39 @@ internal sealed class ShipLineTintMb : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// The paintable renderers: everything under the ship root except the cargo module
-    /// sub-objects (each module lives in its own child with a <c>CargoShipModule*Mb</c>
-    /// component; modules added later create new children, which never enter this list) and
-    /// except particle/trail renderers. Collected once — the hull children are created before
-    /// the ship is first activated and never change.
-    /// </summary>
+    /// <summary>All mesh renderers using the shared hull material (or a repaint of it, when
+    /// recollecting an already-painted ship).</summary>
     private void collectHullRenderers()
     {
-        var renderers = new Lyst<Renderer>();
-        foreach (Transform child in transform)
+        m_collectedChildCount = transform.childCount;
+        m_hullRenderers = new Lyst<Renderer>();
+        foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
         {
-            if (isModuleGo(child))
+            if (!(renderer is MeshRenderer))
             {
                 continue;
             }
-            foreach (Renderer renderer in child.GetComponentsInChildren<Renderer>(true))
+            Material material = renderer.sharedMaterial;
+            if (material == null)
             {
-                if (renderer is MeshRenderer || renderer is SkinnedMeshRenderer)
-                {
-                    renderers.Add(renderer);
-                }
+                continue;
+            }
+            if (s_originalMaterial == null && material.name == HULL_MATERIAL_NAME)
+            {
+                s_originalMaterial = material;
+            }
+            if (material == s_originalMaterial || isTintedMaterial(material))
+            {
+                m_hullRenderers.Add(renderer);
             }
         }
-        m_hullRenderers = renderers.ToArray();
     }
 
-    private static bool isModuleGo(Transform child)
+    private static bool isTintedMaterial(Material material)
     {
-        foreach (MonoBehaviour mb in child.GetComponents<MonoBehaviour>())
+        foreach (KeyValuePair<ulong, Material> pair in s_tintedMaterials)
         {
-            if (mb != null && mb.GetType().Name.StartsWith("CargoShipModule", StringComparison.Ordinal))
+            if (pair.Value == material)
             {
                 return true;
             }
@@ -132,39 +148,127 @@ internal sealed class ShipLineTintMb : MonoBehaviour
 
     private void apply(TrainColor color)
     {
+        Material tinted = getOrCreateTintedMaterial(color);
+        if (tinted == null)
+        {
+            return;
+        }
         m_applied = color;
         m_hasApplied = true;
-        MaterialPropertyBlock mpb = s_mpb ?? (s_mpb = new MaterialPropertyBlock());
-        mpb.Clear();
-        mpb.SetColor(COLOR_ID, color.Primary.ToColor());
-        mpb.SetColor(ACCENT_ID, color.Secondary.ToColor());
         foreach (Renderer renderer in m_hullRenderers)
         {
             if (renderer)
             {
-                renderer.SetPropertyBlock(mpb);
+                renderer.sharedMaterial = tinted;
             }
         }
-        dumpModelOnce();
+        if (Diag.ENABLED)
+        {
+            dumpModelOnce();
+        }
     }
 
     private void clearTint()
     {
         m_hasApplied = false;
+        if (s_originalMaterial == null)
+        {
+            return;
+        }
         foreach (Renderer renderer in m_hullRenderers)
         {
             if (renderer)
             {
-                renderer.SetPropertyBlock(null);
+                renderer.sharedMaterial = s_originalMaterial;
             }
         }
     }
 
+    private static Material getOrCreateTintedMaterial(TrainColor color)
+    {
+        if (s_originalMaterial == null)
+        {
+            return null;
+        }
+        if (s_tintedMaterials.TryGetValue(color.Raw, out Material cached) && cached != null)
+        {
+            return cached;
+        }
+        var tinted = new Material(s_originalMaterial);
+        tinted.name = HULL_MATERIAL_NAME + "_ShippingPP_" + color.Raw;
+        var albedo = s_originalMaterial.mainTexture as Texture2D;
+        if (albedo != null)
+        {
+            tinted.mainTexture = buildTintedAlbedo(albedo, color.Primary.ToColor());
+        }
+        else
+        {
+            Log.Warning("Shipping++: hull material has no 2D albedo texture; ships painted "
+                + "with a whole-hull tint instead.");
+            tinted.SetColor(COLOR_ID, color.Primary.ToColor());
+            if (tinted.HasProperty(ACCENT_ID))
+            {
+                tinted.SetColor(ACCENT_ID, color.Secondary.ToColor());
+            }
+        }
+        s_tintedMaterials[color.Raw] = tinted;
+        return tinted;
+    }
+
+    /// <summary>
+    /// A copy of the hull albedo with the white paint recolored. Near-white texels (bright
+    /// and unsaturated — the superstructure walls and railings) are shifted to the line
+    /// color scaled by their own brightness, so shading and edge wear survive; the blend
+    /// ramps smoothly to zero for darker or saturated texels, leaving hull blue, waterline
+    /// red and deck details untouched. The source texture is not CPU-readable, so it is
+    /// read back through a temporary RenderTexture.
+    /// </summary>
+    private static Texture2D buildTintedAlbedo(Texture2D source, Color tint)
+    {
+        RenderTexture rt = RenderTexture.GetTemporary(source.width, source.height, 0,
+            RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+        RenderTexture previous = RenderTexture.active;
+        Graphics.Blit(source, rt);
+        RenderTexture.active = rt;
+        var copy = new Texture2D(source.width, source.height, TextureFormat.RGBA32,
+            mipChain: true, linear: false);
+        copy.ReadPixels(new Rect(0f, 0f, source.width, source.height), 0, 0);
+        RenderTexture.active = previous;
+        RenderTexture.ReleaseTemporary(rt);
+
+        Color[] pixels = copy.GetPixels();
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            Color pixel = pixels[i];
+            Color.RGBToHSV(pixel, out _, out float saturation, out float value);
+            float w = smoothStep(value, 0.55f, 0.72f)
+                * (1f - smoothStep(saturation, 0.18f, 0.35f));
+            if (w <= 0f)
+            {
+                continue;
+            }
+            var painted = new Color(tint.r * value, tint.g * value, tint.b * value, pixel.a);
+            pixels[i] = Color.Lerp(pixel, painted, w);
+        }
+        copy.SetPixels(pixels);
+        copy.filterMode = source.filterMode;
+        copy.anisoLevel = source.anisoLevel;
+        copy.wrapMode = source.wrapMode;
+        copy.Apply(updateMipmaps: true, makeNoLongerReadable: true);
+        return copy;
+    }
+
+    private static float smoothStep(float x, float from, float to)
+    {
+        float t = Mathf.Clamp01((x - from) / (to - from));
+        return t * t * (3f - 2f * t);
+    }
+
     /// <summary>
     /// One-time survey of the ship model (first painted ship of the session): every renderer
-    /// with its materials, shaders and color properties. This is the ground truth for
-    /// restricting the tint to the white parts of the model — which materials those are cannot
-    /// be read from the game code, only from the loaded assets.
+    /// with its materials, shaders and color properties. This identified the shared hull
+    /// atlas the repaint targets; kept behind the diagnostics switch for future model
+    /// changes.
     /// </summary>
     private void dumpModelOnce()
     {
@@ -174,12 +278,12 @@ internal sealed class ShipLineTintMb : MonoBehaviour
         }
         s_dumped = true;
         Log.Info($"Shipping++[shipmodel]: model survey of ship {m_ship.Id} "
-            + $"({m_hullRenderers.Length} hull renderers):");
+            + $"({m_hullRenderers.Count} hull renderers):");
         foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
         {
             var sb = new StringBuilder(256);
             sb.Append("Shipping++[shipmodel]:   ");
-            sb.Append(Array.IndexOf(m_hullRenderers, renderer) >= 0 ? "hull " : "other");
+            sb.Append(m_hullRenderers.Contains(renderer) ? "hull " : "other");
             sb.Append(" '").Append(pathUnderShip(renderer.transform)).Append("' [")
                 .Append(renderer.GetType().Name).Append(']');
             foreach (Material material in renderer.sharedMaterials)
