@@ -238,10 +238,25 @@ public class LocalShipJobProvider : ICargoShipJobProvider
             return;
         }
         // Docked: any paid leg has arrived (fuel is only paid while departing), and any
-        // holding-anchor slot is given up.
+        // holding-anchor slot is given up. So are ALL dock claims: the berth under the ship is
+        // protected by physical occupancy alone, and the queue entry + berth promise that got
+        // the ship here are consumed by the arrival. The manager's cleanup cannot be trusted
+        // with them — it only runs inside reservation calls, and if no ship happens to poll a
+        // queue during this ship's whole stay, the stale entry would outlive the departure and
+        // then hold the (free) berth against every other ship, since its removal conditions
+        // check where the ship is docked RIGHT NOW. Claims for the next leg are created fresh
+        // at departure, after this release, in this same tick.
+        manager.ReleaseDockClaim(m_ship);
         m_legFuelPaid = false;
         m_anchorSlot = -1;
         m_anchorTerminalId = 0;
+        // Clear a stale low-fuel warning the moment the tank covers the next leg — BEFORE the
+        // crane/settle gates below, or a refueled ship would keep reporting "waiting for fuel"
+        // through its whole (possibly rule-extended) loading stay.
+        if (m_lowFuel && canPayLegFuel())
+        {
+            m_lowFuel = false;
+        }
         if (dockedAt == m_target)
         {
             m_target = null;
