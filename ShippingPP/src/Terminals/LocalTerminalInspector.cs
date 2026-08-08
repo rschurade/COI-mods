@@ -149,29 +149,43 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
                 constrUi.SetProgress(percent, isDeconstruction: false);
             });
 
-        // --- Shipping modules: offer/request direction per module slot. ---
-        // Rows for up to 8 slots (the largest depot); rows without a module/product stay hidden.
+        // --- Shipping: offer/request direction, one row per PRODUCT. ---
+        // Several modules can store the same product; giving each its own checkbox allowed
+        // conflicting directions for one cargo type, so the rows are per distinct product and
+        // a toggle applies to every module storing it. Rows for up to 8 distinct products (the
+        // largest depot has 8 slots); unused rows stay hidden.
         var slotsColumn = new Column(2.pt());
-        for (int slotIndex = 0; slotIndex < 8; slotIndex++)
+        for (int rowIndex = 0; rowIndex < 8; rowIndex++)
         {
-            int i = slotIndex;
+            int i = rowIndex;
             var slotIcon = new Icon().Large().MarginTop(2.pt());
             var slotToggle = new Mafi.Unity.UiToolkit.Library.Toggle(standalone: true)
                 .Label(Txt.Terminal_ModuleExport)
                 .Tooltip(Txt.Terminal_ModuleExport_Tooltip);
             slotToggle.OnValueChanged(delegate
             {
-                CargoDepotModule module = moduleAt(i);
-                if (module != null)
+                ProductProto product = productForRow(i);
+                if (product == null)
                 {
-                    ScheduleCommand(new SetModuleDirectionCmd(module.Id,
-                        !m_shippingManager.IsExportModule(module)));
+                    return;
+                }
+                // A half-configured product (directions disagree, possible in old saves)
+                // flips to all-export first, then toggles as one from there.
+                bool target = !allModulesExport(product);
+                foreach (Mafi.Option<CargoDepotModule> slot in Entity.Modules)
+                {
+                    CargoDepotModule module = slot.ValueOrNull;
+                    if (module != null && module.StoredProduct.ValueOrNull == product
+                        && m_shippingManager.IsExportModule(module) != target)
+                    {
+                        ScheduleCommand(new SetModuleDirectionCmd(module.Id, target));
+                    }
                 }
             });
             slotToggle.ObserveValue(delegate
             {
-                CargoDepotModule module = moduleAt(i);
-                return module != null && m_shippingManager.IsExportModule(module);
+                ProductProto product = productForRow(i);
+                return product != null && allModulesExport(product);
             });
             var thresholdDropdown = new Dropdown<int>(
                 (int opt, int idx, bool inDropdown) => new Label($"{opt} %".AsLoc()))
@@ -179,15 +193,25 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             thresholdDropdown.Tooltip(Txt.Terminal_Threshold_Tooltip);
             thresholdDropdown.OnValueChanged(delegate(int value, int _)
             {
-                CargoDepotModule module = moduleAt(i);
-                if (module != null && m_shippingManager.GetModuleThreshold(module) != value)
+                ProductProto product = productForRow(i);
+                if (product == null)
                 {
-                    ScheduleCommand(new SetModuleThresholdCmd(module.Id, value));
+                    return;
+                }
+                foreach (Mafi.Option<CargoDepotModule> slot in Entity.Modules)
+                {
+                    CargoDepotModule module = slot.ValueOrNull;
+                    if (module != null && module.StoredProduct.ValueOrNull == product
+                        && m_shippingManager.GetModuleThreshold(module) != value)
+                    {
+                        ScheduleCommand(new SetModuleThresholdCmd(module.Id, value));
+                    }
                 }
             });
             thresholdDropdown.ObserveValueDropdown(delegate
             {
-                CargoDepotModule module = moduleAt(i);
+                ProductProto product = productForRow(i);
+                CargoDepotModule module = product != null ? firstModuleOf(product) : null;
                 return module != null ? m_shippingManager.GetModuleThreshold(module) : 100;
             });
             var slotRow = new Row(4.pt())
@@ -199,8 +223,7 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             slotsColumn.Add(slotRow);
             this.Observe(delegate
             {
-                CargoDepotModule module = moduleAt(i);
-                return module?.StoredProduct.ValueOrNull;
+                return productForRow(i);
             }).Do(delegate(ProductProto product)
             {
                 slotRow.Visible(product != null);
@@ -266,13 +289,67 @@ public class LocalTerminalInspector : BaseInspector<LocalTerminal>
             () => Entity, () => Entity.FuelBuffer.Capacity);
     }
 
-    private CargoDepotModule moduleAt(int index)
+    /// <summary>The row-th DISTINCT product stored across the terminal's modules (in slot
+    /// order), or null. The shipping rows are per product, not per module slot.</summary>
+    private ProductProto productForRow(int row)
     {
-        if (Entity == null || index >= Entity.Modules.Length)
+        if (Entity == null)
         {
             return null;
         }
-        return Entity.Modules[index].ValueOrNull;
+        int seen = 0;
+        for (int i = 0; i < Entity.Modules.Length; i++)
+        {
+            ProductProto product = Entity.Modules[i].ValueOrNull?.StoredProduct.ValueOrNull;
+            if (product == null || indexOfProduct(product) < i)
+            {
+                continue; // Empty, or already listed for an earlier slot.
+            }
+            if (seen == row)
+            {
+                return product;
+            }
+            seen++;
+        }
+        return null;
+    }
+
+    /// <summary>Index of the first module slot storing the product, or int.MaxValue.</summary>
+    private int indexOfProduct(ProductProto product)
+    {
+        for (int i = 0; i < Entity.Modules.Length; i++)
+        {
+            if (Entity.Modules[i].ValueOrNull?.StoredProduct.ValueOrNull == product)
+            {
+                return i;
+            }
+        }
+        return int.MaxValue;
+    }
+
+    private CargoDepotModule firstModuleOf(ProductProto product)
+    {
+        int index = indexOfProduct(product);
+        return index == int.MaxValue ? null : Entity.Modules[index].ValueOrNull;
+    }
+
+    /// <summary>Whether every module storing the product is set to export.</summary>
+    private bool allModulesExport(ProductProto product)
+    {
+        bool any = false;
+        foreach (Mafi.Option<CargoDepotModule> slot in Entity.Modules)
+        {
+            CargoDepotModule module = slot.ValueOrNull;
+            if (module != null && module.StoredProduct.ValueOrNull == product)
+            {
+                if (!m_shippingManager.IsExportModule(module))
+                {
+                    return false;
+                }
+                any = true;
+            }
+        }
+        return any;
     }
 
     protected override void OnDeactivated()
