@@ -450,6 +450,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         if (tryConsumeLegFuel())
         {
             m_legFuelPaid = true;
+            applyLegSpeed();
             return true;
         }
         return false;
@@ -517,6 +518,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         {
             return;
         }
+        applyLegSpeed(); // Dry tank: the emergency run home is sailed at half speed.
         if (manager.TryReserveDock(home, m_ship))
         {
             m_idleTicks = 0;
@@ -590,6 +592,7 @@ public class LocalShipJobProvider : ICargoShipJobProvider
                     m_target = terminal;
                     m_idleTicks = 0;
                     m_lineStopIndex++;
+                    applyLegSpeed(); // Dry: sail the granted home berth in at half speed.
                     m_ship.NavigateToDock(terminal);
                 }
                 else
@@ -679,7 +682,50 @@ public class LocalShipJobProvider : ICargoShipJobProvider
         }
         needed = new Quantity((fuelData.FuelPerJourneyBase.Value
             + fuelData.FuelPerJourneyPerModule.Value * nonEmptyModules) / 2);
+        if (m_ship.IsFuelReductionEnabled)
+        {
+            // The vanilla fuel saver ("Reduce ship speed & save fuel" in the ship window),
+            // honored per leg with the vanilla discount; the speed half of the trade-off is
+            // applied when the leg starts (see applyLegSpeed).
+            needed = needed.ScaledBy(CargoShipV2.SAVER_FUEL_MULT);
+        }
         return true;
+    }
+
+    private static System.Reflection.MethodInfo s_setSpeedFactor;
+    private static bool s_speedFactorFailed;
+
+    /// <summary>
+    /// Mirrors the vanilla journey-start speed rule for the leg about to begin: the fuel saver
+    /// — or an empty tank on the emergency run home — halves the sailing speed, otherwise the
+    /// ship sails at full speed. Vanilla applies this only when a ship departs to the world
+    /// map, which local ships never do, so it is mirrored here (the setter sits non-public on
+    /// DrivingEntity).
+    /// </summary>
+    private void applyLegSpeed()
+    {
+        if (s_speedFactorFailed)
+        {
+            return;
+        }
+        if (s_setSpeedFactor == null)
+        {
+            s_setSpeedFactor = typeof(Mafi.Core.Entities.Dynamic.DrivingEntity).GetMethod(
+                "SetSpeedFactor", System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance);
+            if (s_setSpeedFactor == null)
+            {
+                s_speedFactorFailed = true;
+                Log.Warning("Shipping++: DrivingEntity.SetSpeedFactor not found; the fuel "
+                    + "saver reduces fuel but not speed.");
+                return;
+            }
+        }
+        Percent factor = m_ship.IsFuelReductionEnabled || m_lowFuel
+            ? Percent.Hundred / CargoShipV2.SAVER_TRAVEL_DURATION_MULT
+            : Percent.Hundred;
+        s_setSpeedFactor.Invoke(m_ship, new object[] { factor });
     }
 
     /// <summary>Whether the tank covers the next leg, WITHOUT charging for it.</summary>
