@@ -15,6 +15,9 @@ using Mafi.Unity.Ui.Inspectors;
 using Mafi.Unity.UiToolkit;
 using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
+using UnityEngine.UIElements;
+using Column = Mafi.Unity.UiToolkit.Library.Column;
+using Label = Mafi.Unity.UiToolkit.Library.Label;
 
 namespace ShippingPP.Ships;
 
@@ -124,11 +127,36 @@ internal static class ShipHomePortPatch
             sellBtn.Tooltip(Txt.Ship_Sell_Tooltip);
         });
 
+        // The vanilla fuel panel's footer ("N / per a single journey | Round trip duration")
+        // only ever shows real values for world-trade ships — local ships are charged per leg
+        // by the mod, so for them the strip is a permanent "0 / ?". It lives in compiler-
+        // generated locals of the inspector constructor, so it is located in the built visual
+        // tree instead (by its own labels, built from the same Tr strings, so the lookup is
+        // locale-proof) and hidden whenever a local ship is shown.
+        VisualElement fuelFooter = null;
+        try
+        {
+            fuelFooter = findFuelJourneyFooter(panel.RootElement);
+            if (fuelFooter == null)
+            {
+                Log.Warning("Shipping++: fuel journey footer not found in the ship window; "
+                    + "it stays visible for local ships.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"Shipping++: fuel journey footer lookup failed: {ex.Message}");
+        }
+
         inspector.Observe(() => inspector.Entity != null
                 && ShippingManager.IsLocalShip(inspector.Entity))
             .Do(delegate(bool isLocal)
             {
                 panel.Visible(isLocal);
+                if (fuelFooter != null)
+                {
+                    fuelFooter.style.display = isLocal ? DisplayStyle.None : DisplayStyle.Flex;
+                }
             });
         inspector.Observe(delegate
         {
@@ -146,6 +174,71 @@ internal static class ShipHomePortPatch
                 orphaned ? Txt.Ship_NoHomePort : title.AsLoc());
             homeLabel.Color(orphaned ? ColorRgba.Red : (ColorRgba?)null);
         });
+    }
+
+    /// <summary>
+    /// The visual element of the fuel panel's per-journey footer. Found from any component of
+    /// the same inspector: climb to the tree root, find the label built as
+    /// <c>$"/ {Tr.FuelPerJourneySuffix}"</c>, ascend to the deepest ancestor that also holds
+    /// the trip-duration label (the footer's body row), then keep ascending while the parent
+    /// adds no text of its own — that stops exactly at the footer root (its only sibling
+    /// content is the bolts decoration), before the panel body that also holds the fuel bar.
+    /// </summary>
+    private static VisualElement findFuelJourneyFooter(VisualElement anchor)
+    {
+        VisualElement root = anchor;
+        while (root.parent != null)
+        {
+            root = root.parent;
+        }
+        string perJourney = $"/ {Tr.FuelPerJourneySuffix}";
+        string tripDuration = $"{Tr.CargoShip_TripDuration}: ";
+        VisualElement label = null;
+        foreach (TextElement text in root.Query<TextElement>().Build())
+        {
+            if (text.text == perJourney)
+            {
+                label = text;
+                break;
+            }
+        }
+        if (label == null)
+        {
+            return null;
+        }
+        VisualElement node = label;
+        while (node != null && !subtreeHasText(node, tripDuration))
+        {
+            node = node.parent;
+        }
+        while (node != null && node.parent != null
+            && countTexts(node.parent) == countTexts(node))
+        {
+            node = node.parent;
+        }
+        return node;
+    }
+
+    private static bool subtreeHasText(VisualElement node, string value)
+    {
+        foreach (TextElement text in node.Query<TextElement>().Build())
+        {
+            if (text.text == value)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int countTexts(VisualElement node)
+    {
+        int count = 0;
+        foreach (TextElement _ in node.Query<TextElement>().Build())
+        {
+            count++;
+        }
+        return count;
     }
 
     /// <summary>Signature of the sale outcome, so the observer only fires when it changes.
