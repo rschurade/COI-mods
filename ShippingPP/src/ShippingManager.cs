@@ -579,7 +579,7 @@ public class ShippingManager
         foreach (KeyValuePair<CargoShipV2, int> pair in m_shipLines)
         {
             Lines.ShippingLine line = pair.Key.IsDestroyed ? null : TryGetLine(pair.Value);
-            if (line != null)
+            if (line != null && line.ApplyColorToShips)
             {
                 colors[pair.Key.Id] = line.Color.TrainColor;
             }

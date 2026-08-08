@@ -180,6 +180,27 @@ public class ShippingLinesManagerWindow : Window
             return line?.Color ?? default(TrainLineColor);
         });
 
+        // Ship painting per line — the ship equivalent of the vanilla train-line setting
+        // "Apply line color to train cars", as the same style of checkbox.
+        var applyColorToggle = new Toggle(standalone: true).AlignSelfCenter()
+            .Label(Txt.LinesManager_ApplyColorToShips)
+            .Tooltip(Txt.LinesManager_ApplyColorToShips_Tooltip)
+            .ObserveValue(delegate
+            {
+                ShippingLine line = m_selectedLineId >= 0
+                    ? m_manager.TryGetLine(m_selectedLineId) : null;
+                return line?.ApplyColorToShips ?? false;
+            })
+            .OnValueChanged(delegate(bool isOn)
+            {
+                if (m_selectedLineId >= 0)
+                {
+                    m_inputScheduler.ScheduleInputCmd(new ModifyLineCmd(
+                        ModifyLineCmd.ACTION_SET_SHIP_COLORING, m_selectedLineId,
+                        default(EntityId), arg: isOn ? 1 : 0));
+                }
+            });
+
         // Stops tab, built like the vanilla schedule tab: dark rounded scroll container with
         // the line-colored route diagram beside the stop rows, and a footer with the add-stop
         // button (map picking) and the line warning.
@@ -302,7 +323,8 @@ public class ShippingLinesManagerWindow : Window
                 {
                     m_detailTitle,
                     new VerticalDivider(),
-                    lineColorDropdown
+                    lineColorDropdown,
+                    applyColorToggle
                 }),
             tabs.AlignSelfStretch()
         };

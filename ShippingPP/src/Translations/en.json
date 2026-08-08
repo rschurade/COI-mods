@@ -8,6 +8,8 @@
 	["ShippingPP__LinesManager_DeleteLine_Tooltip", "Delete the selected line. Its ships become idle until assigned to another line."],
 	["ShippingPP__LinesManager_NewLine_Tooltip", "Create a new shipping line."],
 	["ShippingPP__LinesManager_LineColor_Tooltip", "Line color"],
+	["ShippingPP__LinesManager_ApplyColorToShips", "Apply line color to ships"],
+	["ShippingPP__LinesManager_ApplyColorToShips_Tooltip", "When enabled, ships assigned to this line are painted in the line color."],
 	["ShippingPP__LinesManager_NoStops", "No stops yet — add local terminals and navigation buoys."],
 	["ShippingPP__LinesManager_AddStop_Tooltip", "Pick stops directly on the map: click a local terminal or a navigation buoy to append it to the line. Hold shift to add several stops in a row; right-click or Escape to finish."],
 	["ShippingPP__LinesManager_StopsTab", "Stops"],

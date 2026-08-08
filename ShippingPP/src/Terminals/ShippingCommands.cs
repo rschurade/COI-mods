@@ -350,6 +350,8 @@ public class ModifyLineCmd : InputCommand
     public const byte ACTION_RENAME = 6;
     public const byte ACTION_REORDER_STOP = 7;
     public const byte ACTION_SET_COLOR = 8;
+    /// <summary>Arg 0/1: whether the line's ships are painted in the line color.</summary>
+    public const byte ACTION_SET_SHIP_COLORING = 9;
 
     public readonly byte Action;
 
@@ -633,6 +635,16 @@ internal class ShippingCommandsProcessor
                 {
                     var palette = Mafi.Core.Trains.TrainLine.COLOR_PALETTE;
                     colored.Color = palette[Math.Abs(cmd.Arg) % palette.Length];
+                    m_shippingManager.PublishShipTints();
+                    cmd.SetResultSuccess();
+                    return;
+                }
+                break;
+            case ModifyLineCmd.ACTION_SET_SHIP_COLORING:
+                Lines.ShippingLine painted = m_shippingManager.TryGetLine(cmd.LineId);
+                if (painted != null)
+                {
+                    painted.ApplyColorToShips = cmd.Arg != 0;
                     m_shippingManager.PublishShipTints();
                     cmd.SetResultSuccess();
                     return;

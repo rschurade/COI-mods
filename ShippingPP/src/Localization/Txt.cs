@@ -32,6 +32,13 @@ internal static class Txt
     public static readonly LocStrFormatted LinesManager_LineColor_Tooltip =
         str("LinesManager_LineColor_Tooltip", "Line color");
 
+    public static readonly LocStrFormatted LinesManager_ApplyColorToShips =
+        str("LinesManager_ApplyColorToShips", "Apply line color to ships");
+
+    public static readonly LocStrFormatted LinesManager_ApplyColorToShips_Tooltip =
+        str("LinesManager_ApplyColorToShips_Tooltip",
+            "When enabled, ships assigned to this line are painted in the line color.");
+
     public static readonly LocStrFormatted LinesManager_NoStops =
         str("LinesManager_NoStops", "No stops yet — add local terminals and navigation buoys.");
 

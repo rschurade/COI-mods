@@ -16,7 +16,7 @@ namespace ShippingPP.Lines;
 /// </summary>
 public sealed class ShippingLine
 {
-    private const int SAVE_VERSION = 5;
+    private const int SAVE_VERSION = 6;
 
     public int Id { get; private set; }
 
@@ -25,6 +25,10 @@ public sealed class ShippingLine
     /// <summary>The line's display color — the vanilla train-line color type, so the vanilla
     /// palette and color UI components apply as-is.</summary>
     public TrainLineColor Color { get; set; }
+
+    /// <summary>Whether the line's ships are painted in the line color (the ship equivalent of
+    /// the vanilla "Apply line color to train cars" line setting).</summary>
+    public bool ApplyColorToShips { get; set; }
 
     /// <summary>The stops, each carrying its own departure rule. One list, so reordering and
     /// removal move a rule with its stop automatically and a rule can never end up attached to
@@ -44,6 +48,7 @@ public sealed class ShippingLine
         // on (as in vanilla, where a renamed line also keeps its literal name).
         Name = Mafi.Core.Tr.Train_Line.Format(id.ToString()).Value;
         Color = DefaultColorFor(id);
+        ApplyColorToShips = true;
         m_stops = new Lyst<LineStop>();
     }
 
@@ -184,6 +189,7 @@ public sealed class ShippingLine
         writer.WriteInt(Id);
         writer.WriteString(Name);
         TrainLineColor.Serialize(Color, writer);
+        writer.WriteBool(ApplyColorToShips);
         writer.WriteInt(m_stops.Count);
         foreach (LineStop stop in m_stops)
         {
@@ -211,6 +217,9 @@ public sealed class ShippingLine
         Id = reader.ReadInt();
         Name = reader.ReadString();
         Color = version >= 3 ? TrainLineColor.Deserialize(reader) : DefaultColorFor(Id);
+        // Explicit for older saves too: a blob-restored object never ran its constructor, so
+        // the property would otherwise default to false and silently unpaint existing fleets.
+        ApplyColorToShips = version < 6 || reader.ReadBool();
         m_stops = new Lyst<LineStop>();
         if (version >= 5)
         {
