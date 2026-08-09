@@ -1,6 +1,18 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.2
+------
+- Local terminals can now be upgraded in place with the vanilla
+  upgrade button in the window header, exactly like the vanilla cargo
+  depots: the 2-slot terminal upgrades to the 4-slot one and the
+  6-slot to the 8-slot (the 4-to-6 step needs a rebuild, as for the
+  vanilla depots — that is where the quay doubles in length). The
+  upgrade checks that the replacement fits, delivers the materials by
+  truck, and keeps everything the terminal owns: ships, lines, berth
+  queue, module settings and cargo. Existing ships keep their size;
+  ships built after the upgrade match the new terminal size.
+
 v0.6.1
 ------
 Terminal window:
