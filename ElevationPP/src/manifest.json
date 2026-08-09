@@ -1,6 +1,6 @@
 {
   "id": "ElevationPP",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "display_name": "Elevation++",
   "description_short": "Elevated train stations, plus taller pillars and longer spans for elevated rails, pipes and belts.",
   "description_long": "Adds elevated train stations and raises the height and pillar-spacing limits of elevated structures.\n\nElevated stations: every train station — the root plus all cargo modules (unit, loose, fluid, molten, empty) and fuel modules (coal, liquid, nuclear) — can be built on auto-rendered support pillars, for both normal and electrified rail. They live in a dedicated \"Elevated stations\" toolbar tab, grouped and ordered like the vanilla Stations menu, reuse the vanilla icons, and unlock with the same research as their ground counterparts.\n\nTrain tracks: pillars up to 16 tiles tall (vanilla 6) and track up to 14 tiles from a supporting pillar (vanilla 7). Pipes and belts: pillars up to 16 tiles tall (vanilla 6) and transport up to 8 tiles from a pillar (vanilla 4), so auto-built pillars are placed roughly twice as far apart. All four values are configurable in the mod settings (RailPillarMaxHeight, RailPillarSupportDistance, TransportPillarMaxHeight, TransportPillarSupportDistance) and changes apply immediately. Warning: if you remove the mod (or lower the values) after building structures that exceed the vanilla limits, those structures will be considered unsupported and may collapse.",
@@ -10,5 +10,5 @@
   "can_add_to_saved_game": true,
   "can_remove_from_saved_game": false,
   "min_game_version": "0.8.5",
-  "max_verified_game_version": "0.8.6"
+  "max_verified_game_version": "0.8.7"
 }

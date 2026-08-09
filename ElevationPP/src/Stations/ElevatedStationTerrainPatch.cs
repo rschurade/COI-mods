@@ -4,11 +4,14 @@ using HarmonyLib;
 using Mafi;
 using Mafi.Collections;
 using Mafi.Collections.ReadonlyCollections;
+using Mafi.Core;
 using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static;
 using Mafi.Core.Entities.Static.Layout;
+using Mafi.Core.Entities.Validators;
 using Mafi.Core.Factory.Transports;
 using Mafi.Core.Ports;
+using Mafi.Core.Terrain;
 
 namespace ElevationPP.Stations;
 
@@ -38,6 +41,17 @@ namespace ElevationPP.Stations;
 /// applied relative to entity Z on build/deconstruct), which would similarly re-shape ground at
 /// deck height.
 ///
+/// Also enforces the terrain collision the hollow footprint otherwise loses: vanilla
+/// elevation-capable protos put minTerrainHeight/maxTerrainHeight 0 on their UsingPillar tokens,
+/// which is what StaticEntitiesTerrainInteractionManager's validator keys its "Terrain too
+/// high"/pillar bookkeeping on — tokens without the bounds (like ours) are skipped entirely, so
+/// a station could be lowered INTO the ground. We cannot simply add the vanilla bounds: the
+/// minTerrainHeight side re-enables the "No pillars" rejection on tiles blocked by an existing
+/// track span, which splicing a station onto a built line depends on. Instead a postfix on the
+/// elevation validator's CanAdd re-adds just the too-high half for our protos: any footprint
+/// tile whose bottom sits below the terrain surface (beyond the same vanilla tolerance) rejects
+/// with the stock "Terrain too high" error, marking the offending tiles red.
+///
 /// Also fixes the pillars staying blueprint-blue under a finished station root: the vanilla
 /// construction sync (TransportsManager.onEntityConstructed) makes the attached pillars fully
 /// constructed when the elevated entity completes, but it early-returns for entities WITHOUT
@@ -54,6 +68,7 @@ internal static class ElevatedStationTerrainPatch
 
     private static FieldInfo s_lastAddRequestField;
     private static FieldInfo s_transportsManagerField;
+    private static FieldInfo s_terrainManagerField;
     private static MethodInfo s_findAttachedPillars;
 
     public static void TryApply()
@@ -68,16 +83,21 @@ internal static class ElevatedStationTerrainPatch
             "DoNotAdjustTerrainDuringConstruction");
         MethodBase prepareForAdd = AccessTools.Method(
             typeof(ILayoutEntityProtoWithElevationValidator), "PrepareForAdd");
+        MethodBase canAdd = AccessTools.Method(
+            typeof(ILayoutEntityProtoWithElevationValidator), "CanAdd");
         s_lastAddRequestField = AccessTools.Field(
             typeof(ILayoutEntityProtoWithElevationValidator), "m_lastAddRequest");
         s_transportsManagerField = AccessTools.Field(
             typeof(ILayoutEntityProtoWithElevationValidator), "m_transportsManager");
+        s_terrainManagerField = AccessTools.Field(
+            typeof(ILayoutEntityProtoWithElevationValidator), "m_terrainManager");
         MethodBase onConstructed = AccessTools.Method(typeof(TransportsManager),
             "onEntityConstructed");
         s_findAttachedPillars = AccessTools.Method(typeof(TransportsManager),
             "FindAttachedPillars", new[] { typeof(LayoutEntity), typeof(Lyst<TransportPillar>) });
-        if (getter == null || prepareForAdd == null || s_lastAddRequestField == null
-            || s_transportsManagerField == null || onConstructed == null
+        if (getter == null || prepareForAdd == null || canAdd == null
+            || s_lastAddRequestField == null || s_transportsManagerField == null
+            || s_terrainManagerField == null || onConstructed == null
             || s_findAttachedPillars == null)
         {
             Log.Error("Elevation++: elevation validator internals not resolved; "
@@ -90,6 +110,8 @@ internal static class ElevatedStationTerrainPatch
             var harmony = new Harmony(HARMONY_ID);
             harmony.Patch(prepareForAdd, prefix: new HarmonyMethod(
                 typeof(ElevatedStationTerrainPatch), nameof(PrepareForAddPrefix)));
+            harmony.Patch(canAdd, postfix: new HarmonyMethod(
+                typeof(ElevatedStationTerrainPatch), nameof(CanAddPostfix)));
             harmony.Patch(getter, postfix: new HarmonyMethod(typeof(ElevatedStationTerrainPatch),
                 nameof(DoNotAdjustTerrainPostfix)));
             harmony.Patch(onConstructed, postfix: new HarmonyMethod(
@@ -149,6 +171,57 @@ internal static class ElevatedStationTerrainPatch
         {
             logOnce(ex);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// The terrain-too-high half of the vanilla terrain-collision check (see the class comment):
+    /// rejects placement when any footprint tile's bottom sits below the terrain surface, so the
+    /// station cannot be lowered into the ground. Runs after the validator's own CanAdd so its
+    /// pillar metadata (which PrepareForAdd consumes) is already recorded.
+    /// </summary>
+    private static void CanAddPostfix(ILayoutEntityProtoWithElevationValidator __instance,
+        LayoutEntityAddRequest addRequest, ref EntityValidationResult __result)
+    {
+        try
+        {
+            if (__result.IsError || !isOurStationProto(addRequest.Proto))
+            {
+                return;
+            }
+            if (!(s_terrainManagerField.GetValue(__instance) is TerrainManager terrain))
+            {
+                return;
+            }
+
+            Tile3i origin = addRequest.Origin;
+            bool tooHigh = false;
+            for (int i = 0; i < addRequest.OccupiedTiles.Length; i++)
+            {
+                OccupiedTileRelative tile = addRequest.OccupiedTiles[i];
+                HeightTilesI tileBottom = origin.Height + tile.FromHeightRel;
+                HeightTilesF terrainHeight = terrain.GetHeight(origin.Xy + tile.RelCoord);
+                if (terrainHeight - StaticEntitiesTerrainInteractionManager.TOLERANCE
+                    <= tileBottom.HeightTilesF)
+                {
+                    continue;
+                }
+                tooHigh = true;
+                if (!addRequest.RecordTileErrorsAndMetadata)
+                {
+                    break;
+                }
+                addRequest.SetTileError(i);
+            }
+
+            if (tooHigh)
+            {
+                __result = EntityValidationResult.CreateError(Tr.AdditionError__TerrainTooHigh);
+            }
+        }
+        catch (Exception ex)
+        {
+            logOnce(ex);
         }
     }
 

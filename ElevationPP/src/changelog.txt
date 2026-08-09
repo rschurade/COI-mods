@@ -1,6 +1,20 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.9
+------
+Fixes:
+- Elevated stations no longer accept being lowered into the ground:
+  placing a station with any part of its footprint below the terrain
+  surface is now rejected with the standard "Terrain too high" error,
+  marking the offending tiles red — matching how vanilla elevatable
+  buildings behave. (The stations' custom footprint carried no terrain
+  bounds, so the game's terrain-collision validator skipped them
+  entirely.) Raised placement on pillars and splicing a station onto
+  an existing elevated line are unaffected.
+
+Verified against game v0.8.7.
+
 v0.9.8
 ------
 New building — Balancing pipe connector:
