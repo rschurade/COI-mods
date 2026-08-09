@@ -1,6 +1,20 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.1
+------
+Terminal window:
+- One offer/request row per product instead of per module. Previously
+  two modules storing the same product got separate checkboxes and
+  could be configured with conflicting directions; now each cargo type
+  has a single checkbox that applies to every module storing it. A
+  terminal from an older save with disagreeing directions shows the
+  product unchecked and unifies all its modules on the first click.
+- Removed the dead network-threshold dropdown. It belonged to the
+  automatic network dispatcher; since ships only serve lines, the
+  value had no effect on anything. Old saves carrying the setting
+  load fine.
+
 v0.6.0
 ------
 Ships in line colors:
