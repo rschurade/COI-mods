@@ -62,18 +62,39 @@ internal class LocalTerminalData : IModData
         }
 
         LocalTerminalProto previous = null;
+        CargoDepotProto previousDonor = null;
         for (int tier = 1; tier <= donors.Count; tier++)
         {
-            LocalTerminalProto proto = registerTier(db, donors[tier - 1], tier);
+            CargoDepotProto donor = donors[tier - 1];
+            LocalTerminalProto proto = registerTier(db, donor, tier);
             if (proto == null)
             {
                 continue;
             }
-            // Chain the tiers so the toolbar groups them into one entry with a tier popup,
-            // exactly like the vanilla cargo depots. Indirect only — no in-place upgrade
-            // (an upgrade would replace the terminal entity under the fleet's bookkeeping).
-            previous?.SetNextTierIndirect(proto);
+            // Chain the tiers so the toolbar groups them into one entry with a tier popup —
+            // mirroring the donors' own topology, so the vanilla in-place upgrade button appears
+            // exactly where the vanilla depots have one (2→4 and 6→8 slots are direct upgrades
+            // with an identical footprint; 4→6 is indirect only because the quay doubles in
+            // length there). The upgrade is safe for the fleet bookkeeping: CargoDepot's
+            // TryReplaceSelf swaps the proto on the SAME entity (id preserved) and re-slots the
+            // existing module entities, so queues, berth grants, home ports, line stops and
+            // module directions all carry over.
+            if (previous != null)
+            {
+                if (ReferenceEquals(previousDonor.Upgrade.NextTier.ValueOrNull, donor))
+                {
+                    previous.SetNextTier(proto);
+                }
+                else
+                {
+                    previous.SetNextTierIndirect(proto);
+                }
+            }
+            // Same one-way rules as the vanilla depots: never downgrade, never move.
+            proto.Upgrade.SetCannotDowngrade();
+            proto.Upgrade.SetCannotMove();
             previous = proto;
+            previousDonor = donor;
         }
 
         // The module product-picker patch needs the protos db to enumerate all products.

@@ -34,6 +34,7 @@ internal static class LocalTerminalSim
     private static FieldInfo s_hasShipLastStep;
     private static FieldInfo s_reservationManager;
     private static FieldInfo s_vehicleBuffersRegistry;
+    private static FieldInfo s_upgradeInProgress;   // optional (hygiene only)
 
     public static bool TryInitialize()
     {
@@ -51,6 +52,8 @@ internal static class LocalTerminalSim
         s_hasShipLastStep = depot.GetField("m_hasShipLastStep", ANY);
         s_reservationManager = depot.GetField("m_reservationManager", ANY);
         s_vehicleBuffersRegistry = depot.GetField("m_vehicleBuffersRegistry", ANY);
+        // Not part of the init-failure check: purely cosmetic bookkeeping (see updateInternal).
+        s_upgradeInProgress = depot.GetField("m_upgradeInProgress", ANY);
 
         s_initFailed = s_fuelBuffer == null || s_hasShip == null || s_hasShipLastStep == null
             || s_reservationManager == null || s_vehicleBuffersRegistry == null
@@ -87,6 +90,16 @@ internal static class LocalTerminalSim
 
     private static void updateInternal(LocalTerminal terminal)
     {
+        // Vanilla clears this flag on the first constructed tick after an in-place tier upgrade
+        // (and uses it to upgrade its slot ship — a slot local terminals keep empty, so only the
+        // flag reset is mirrored here; the terminal's own fleet keeps its existing ships, new
+        // ships are simply built at the upgraded size).
+        if (s_upgradeInProgress != null && terminal.IsConstructed
+            && (bool)s_upgradeInProgress.GetValue(terminal))
+        {
+            s_upgradeInProgress.SetValue(terminal, false);
+        }
+
         if (terminal.IsNotEnabled)
         {
             return;
