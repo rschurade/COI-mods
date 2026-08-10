@@ -174,6 +174,36 @@ public sealed class ShippingPPMod : IMod
             Log.Error($"Shipping++: failed to apply module picker patch: {ex.Message}");
         }
 
+        // New modules on local terminals instantiate as the route-capable module subclass.
+        try
+        {
+            Terminals.ModuleFactoryPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply module factory patch: {ex.Message}");
+        }
+
+        // Import/export routes panels in the module window (route-capable modules only).
+        try
+        {
+            Terminals.ModuleRoutesUiPatch.TryInitialize(resolver);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply module routes UI patch: {ex.Message}");
+        }
+
+        // Storages accept terminal modules as truck-route partners (assign export/import).
+        try
+        {
+            Terminals.StorageRoutePatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Shipping++: failed to apply storage route patch: {ex.Message}");
+        }
+
         // Navigation buoys are placed at sea level instead of sinking to the ocean floor.
         try
         {

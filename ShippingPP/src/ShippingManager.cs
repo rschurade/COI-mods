@@ -266,6 +266,12 @@ public class ShippingManager
         {
             module.SetLogisticsInputDisabled(true);
         }
+
+        // Directed truck routes (storage ↔ module) are direction-sensitive: flag any that no
+        // longer match as invalid (vanilla "Invalid import/export route" notification). Runs on
+        // every re-apply, so both an explicit direction flip and a later logistics change get
+        // reflected without extra plumbing.
+        (module as Terminals.LocalTerminalModule)?.RefreshRouteValidity();
     }
 
     /// <summary>Periodic idempotent re-apply for all terminal modules (and pruning).</summary>
