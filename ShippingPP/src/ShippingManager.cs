@@ -210,6 +210,18 @@ public class ShippingManager
         bool changed = isExport ? m_exportModules.Add(module) : m_exportModules.Remove(module);
         if (changed)
         {
+            // A direction flip re-opens the truck direction the OLD role had forced shut
+            // (export feeds by truck deliveries, import distributes by truck pickups);
+            // applyModuleDirection then closes the now-wrong one. Outside of a flip the
+            // useful direction is the player's to toggle, so it is only touched here.
+            if (isExport)
+            {
+                module.SetLogisticsInputDisabled(false);
+            }
+            else
+            {
+                module.SetLogisticsOutputDisabled(false);
+            }
             applyModuleDirection(module);
         }
     }
@@ -224,9 +236,13 @@ public class ShippingManager
 
     /// <summary>
     /// Brings a module's truck-logistics registration in line with its direction: an export
-    /// module consumes factory products (global input, truck deliveries enabled), an import
-    /// module offers them (global output, truck pickups enabled). Idempotent; re-run
-    /// periodically because product (re)assignment recreates the buffer with vanilla defaults.
+    /// module consumes factory products (global input), an import module offers them (global
+    /// output). Idempotent; re-run periodically because product (re)assignment recreates the
+    /// buffer with vanilla defaults. Only the truck direction that makes no sense for the role
+    /// is forced OFF (export: no truck pickups, they would haul the offered product back out;
+    /// import: no truck deliveries, they would race the ships). The useful direction is left
+    /// exactly as the player set it — a module can be fed or emptied by belt only, and the
+    /// vanilla truck toggles must not snap back to enabled (they used to, every scan tick).
     /// </summary>
     private void applyModuleDirection(CargoDepotModule module)
     {
@@ -242,13 +258,13 @@ public class ShippingManager
                     | System.Reflection.BindingFlags.Instance);
             setIsInput?.Invoke(option.Value, new object[] { isExport });
         }
-        if (module.IsLogisticsInputDisabled == isExport)
+        if (isExport && !module.IsLogisticsOutputDisabled)
         {
-            module.SetLogisticsInputDisabled(!isExport);
+            module.SetLogisticsOutputDisabled(true);
         }
-        if (module.IsLogisticsOutputDisabled != isExport)
+        else if (!isExport && !module.IsLogisticsInputDisabled)
         {
-            module.SetLogisticsOutputDisabled(isExport);
+            module.SetLogisticsInputDisabled(true);
         }
     }
 
