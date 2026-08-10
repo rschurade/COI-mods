@@ -1,6 +1,34 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.3
+------
+Truck routes for terminal modules:
+- Terminal cargo modules can now take part in the game's directed
+  truck routes, which vanilla restricts to storages and mine/forestry
+  towers. An export module can be the target of a storage's export
+  route (trucks deliver exactly what the ships take away); an import
+  module can be the source of a storage's import route (trucks
+  distribute what the ships bring in). Assign routes from the storage
+  window as usual — modules are now valid picks — or from the module
+  window, which gains the vanilla Import/Export routes panel (icons of
+  the assigned storages, click to jump there, right-click to remove,
+  +/- to pick on the map; needs the same custom-routes research).
+- Flipping a module between import and export (or disabling its truck
+  logistics) marks routes that no longer fit with the standard
+  "Invalid import/export route" warning until they are removed or the
+  direction is restored.
+- Only modules built with this version can join routes; modules from
+  older saves need to be demolished and rebuilt once.
+
+Fixes:
+- The module window's "trucks can import/export" toggles no longer
+  snap back to enabled: the mod only forces OFF the truck direction
+  that conflicts with the shipping direction and leaves the useful
+  one to the player, so a module fed or emptied by belt only stays
+  that way. Flipping the shipping direction still resets the toggles
+  to the sensible default.
+
 v0.6.2
 ------
 - Local terminals can now be upgraded in place with the vanilla
