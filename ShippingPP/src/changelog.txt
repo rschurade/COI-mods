@@ -1,6 +1,11 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.4
+------
+- Added a Russian translation. Strings added in recent versions that
+  are not translated yet fall back to English.
+
 v0.6.3
 ------
 Truck routes for terminal modules:
