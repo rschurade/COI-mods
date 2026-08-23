@@ -9,6 +9,7 @@ using Mafi.Curves;
 using Mafi.Core.Entities.Animations;
 using Mafi.Core.Entities.Static;
 using Mafi.Core.Entities.Static.Layout;
+using Mafi.Core.Factory.Transports;
 using Mafi.Core.Mods;
 using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
@@ -31,10 +32,12 @@ namespace ElevationPP.Stations;
 /// </summary>
 internal class ElevatedStationData : IModData
 {
-    private static readonly Proto.ID ELEVATED_CATEGORY_ID = new Proto.ID("ElevationPP_ElevatedStations");
+    internal static readonly Proto.ID ELEVATED_CATEGORY_ID = new Proto.ID("ElevationPP_ElevatedStations");
     private static readonly LocStr1 ELEVATED_PREFIX =
         Loc.Str1("ElevationPP_ElevatedPrefix", "Elevated {0}", "Name prefix for elevated train station variants.");
-    private const int PLACEMENT_HEIGHT_MAX = 16;
+    // Highest station deck with a pillar under it: pillar height cap minus the deck tile itself
+    // (the pillar's top tile is the station's base tile). Follows TransportPillarMaxHeight.
+    private static int PlacementHeightMax => TransportPillarProto.MAX_PILLAR_HEIGHT.Value - 1;
 
     public void RegisterData(ProtoRegistrator registrator)
     {
@@ -490,7 +493,7 @@ internal class ElevatedStationData : IModData
     {
         var footprint = new HashSet<(int, int)>();
         registrator.LayoutParser.ParseLayoutOrThrow(
-            new EntityLayoutParams(customPlacementRange: new ThicknessIRange(0, PLACEMENT_HEIGHT_MAX),
+            new EntityLayoutParams(customPlacementRange: new ThicknessIRange(0, PlacementHeightMax),
                 tokenPostProcesssor: (RelTile2i coord, LayoutTokenSpec spec) =>
                 {
                     if (!spec.IsPort)
@@ -502,7 +505,7 @@ internal class ElevatedStationData : IModData
             rows);
 
         return registrator.LayoutParser.ParseLayoutOrThrow(
-            new EntityLayoutParams(customPlacementRange: new ThicknessIRange(0, PLACEMENT_HEIGHT_MAX),
+            new EntityLayoutParams(customPlacementRange: new ThicknessIRange(0, PlacementHeightMax),
                 tokenPostProcesssor: (RelTile2i coord, LayoutTokenSpec spec) =>
                 {
                     if (spec.IsPort)

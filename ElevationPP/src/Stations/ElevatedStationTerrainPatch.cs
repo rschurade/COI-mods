@@ -124,10 +124,12 @@ internal static class ElevatedStationTerrainPatch
         }
     }
 
+    /// <summary>The mod's own elevated layout protos: the stations and the concrete platforms (which
+    /// stand on the same hollow-footprint pillar scheme and need the same terrain handling).</summary>
     private static bool isOurStationProto(object proto)
     {
         return proto is ElevatedStationRootProto || proto is ElevatedStationModuleProto
-            || proto is ElevatedStationFuelProto;
+            || proto is ElevatedStationFuelProto || proto is Platforms.ConcretePlatformProto;
     }
 
     private static bool PrepareForAddPrefix(ILayoutEntityProtoWithElevationValidator __instance)

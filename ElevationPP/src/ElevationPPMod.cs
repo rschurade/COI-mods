@@ -92,6 +92,9 @@ public sealed class ElevationPPMod : IMod
         // Adds the "Balancing pipe connector" — a 1x1 pipe connector with the vanilla balancer's
         // prioritization features and management window.
         registrator.RegisterData<Connectors.BalancingConnectorData>();
+
+        // Adds the concrete platforms — elevatable slabs other buildings can be built on.
+        registrator.RegisterData<Platforms.ConcretePlatformData>();
     }
 
     public void RegisterDependencies(DependencyResolverBuilder depBuilder, ProtosDb protosDb, bool gameWasLoaded)
@@ -139,6 +142,38 @@ public sealed class ElevationPPMod : IMod
         catch (Exception ex)
         {
             Log.Error($"Elevation++: Failed to apply pillar render patch: {ex.Message}");
+        }
+
+        // Concrete platforms: the "buildings on a platform" rules (session registry + the terrain,
+        // construction, watchdog and truck-goal patches), then the platform model, icon and the
+        // cursor snapping (rendering/UI parts are no-ops in headless runs). The shared concrete
+        // material is per session (Unity objects do not survive scene reloads).
+        try
+        {
+            Platforms.PlatformSupport.Initialize(resolver);
+            Platforms.PlatformSupportPatch.TryApply();
+            Platforms.PlatformPillarPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to init concrete platform support: {ex.Message}");
+        }
+        try
+        {
+            ConcreteMaterial.Reset();
+            Platforms.ConcretePlatformModel.TryInject(resolver, Platforms.ConcretePlatformData.SIZES);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to inject concrete platform models: {ex.Message}");
+        }
+        try
+        {
+            Platforms.PlatformSnapPatch.TryApply();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Elevation++: Failed to apply platform cursor snapping patch: {ex.Message}");
         }
 
         // Lets a placed elevated station be electrified in-place (the vanilla "Electrify track"

@@ -94,6 +94,14 @@ public sealed class LongTransportPathFinder : ITransportPathFinder
         m_options = options;
         m_bannedTiles = bannedTiles?.ToArray();
         m_goal = clampGoal(start, goal);
+        if (options.HasFlags(TransportPathFinderFlags.AllowOnlyStraight))
+        {
+            // Vanilla (shift held) snaps the goal onto the dominant axis relative to the start and
+            // forbids every tile off that axis. Snap the overall goal here so all waypoints are
+            // collinear with the start; otherwise each leg would pick its own dominant axis and the
+            // legs would zig-zag.
+            m_goal = snapToAxis(start, m_goal);
+        }
         m_failed = false;
 
         if (isWithinVanillaWindow(m_start, m_goal))
@@ -138,6 +146,19 @@ public sealed class LongTransportPathFinder : ITransportPathFinder
                 // and is never nudged.
                 if (m_legIndex < m_waypoints.Count - 1 && m_nudgeIndex < NUDGES.Length)
                 {
+                    if (m_options.HasFlags(TransportPathFinderFlags.AllowOnlyStraight))
+                    {
+                        // Sideways nudges would leave the forced axis; only shorter legs can help.
+                        while (m_nudgeIndex < NUDGES.Length && NUDGES[m_nudgeIndex].Y != 0)
+                        {
+                            m_nudgeIndex++;
+                        }
+                        if (m_nudgeIndex >= NUDGES.Length)
+                        {
+                            m_failed = true;
+                            return PathFinderResult.PathDoesNotExist;
+                        }
+                    }
                     nudgeCurrentWaypoint();
                     initCurrentLeg();
                     continue;
@@ -189,6 +210,14 @@ public sealed class LongTransportPathFinder : ITransportPathFinder
         RelTile3i d = goal - start;
         return Math.Abs(d.X) <= VANILLA_REACH_XY && Math.Abs(d.Y) <= VANILLA_REACH_XY
             && d.Z <= VANILLA_REACH_Z_UP && d.Z >= -VANILLA_REACH_Z_DOWN;
+    }
+
+    private static Tile3i snapToAxis(Tile3i start, Tile3i goal)
+    {
+        RelTile3i d = goal - start;
+        return Math.Abs(d.X) <= Math.Abs(d.Y)
+            ? new Tile3i(start.X, goal.Y, goal.Z)
+            : new Tile3i(goal.X, start.Y, goal.Z);
     }
 
     private Tile3i clampGoal(Tile3i start, Tile3i goal)

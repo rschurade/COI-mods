@@ -64,6 +64,12 @@
 		<Reference Include="UnityEngine.InputLegacyModule">
 			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
 		</Reference>
+		<Reference Include="UnityEngine.PhysicsModule">
+			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.UIElementsModule">
+			<HintPath>$(COI_ROOT)\Captain of Industry_Data\Managed\UnityEngine.UIElementsModule.dll</HintPath>
+		</Reference>
 	</ItemGroup>
 
 	<ItemGroup>

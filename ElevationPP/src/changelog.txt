@@ -1,6 +1,41 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.10
+-------
+New building — Concrete platforms:
+- Elevatable concrete slabs (1x1 to 5x5 tiles) that other buildings
+  can be built on. Raise them with the placement height keys like the
+  elevated stations; support pillars are built automatically under
+  the corners and along the edges, and they can stand over water.
+- Ordinary buildings, storages and machines placed fully on a deck
+  treat it as their ground: the cursor snaps onto the platform, no
+  dirt foundation is raised under them, and trucks serve them from
+  the ground beside or under the platform (leave the vanilla
+  clearance of 2 tiles for small and 4 for large trucks).
+- Belts and pipes routed across a platform get their pillars standing
+  ON the deck instead of passing through it.
+- A platform cannot be removed while something stands on it; if it
+  collapses, the buildings on it get the standard "may collapse"
+  treatment like any building that lost its ground.
+- Own "Platforms" toolbar tab next to Bridges, unlocked by the vehicle
+  ramps research; costs scale with the deck area.
+
+Changes:
+- Rail portal crossbeams and the new platforms share one poured-
+  concrete material built from the game's seamless terrain concrete
+  maps, so the procedural geometry no longer shows atlas seams.
+- The elevated stations' maximum placement height now follows the
+  TransportPillarMaxHeight setting (pillar cap minus the deck tile,
+  15 by default) instead of a fixed 16.
+
+Fixes:
+- Holding SHIFT for a straight belt/pipe now yields a straight run on
+  long drags too. Drags beyond the vanilla reach are routed in legs;
+  each leg snapped to its own dominant axis, which could zig-zag the
+  line. The overall goal is now snapped to one axis before the legs
+  are laid out.
+
 v0.9.9
 ------
 Fixes:
