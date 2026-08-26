@@ -1,0 +1,14 @@
+{
+  "id": "ExcavatorPP",
+  "version": "0.1.1",
+  "display_name": "Excavator++",
+  "description_short": "Excavators keep mining with a partially filled bucket instead of idling until a truck takes the leftover.",
+  "description_long": "In the vanilla game an excavator must empty its bucket completely before it may dig again. When a scoop only partially fills a waiting truck, the leftover material stays in the bucket and the excavator stands idle until another truck arrives to take those few units — and that truck then leaves partially filled, repeating the cycle forever.\n\nWith this mod the excavator keeps digging until its bucket is full and only then unloads, carrying any leftover material in the bucket in the meantime. Every dump is a full bucket, every truck leaves full, and the out-of-sync cycle heals itself: no more excavators waiting on a truck just to hand over a few units of dirt.\n\nAs a side effect, thin terrain layers no longer cause a full swing-to-truck cycle for every tiny scoop — small scoops accumulate in the bucket first.\n\nWhen a mining job is about to end (area levelled, low fuel, changed product priority), the bucket is unloaded to a truck as usual, so no material is lost. Safe to add to and remove from existing saves.",
+  "authors": "Roest",
+  "primary_dlls": [ "0Harmony.dll", "ExcavatorPP.dll" ],
+  "non_locking_dll_load": true,
+  "can_add_to_saved_game": true,
+  "can_remove_from_saved_game": true,
+  "min_game_version": "0.8.5",
+  "max_verified_game_version": "0.8.7"
+}

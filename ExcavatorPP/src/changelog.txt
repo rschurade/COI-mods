@@ -1,0 +1,27 @@
+Excavator++ — Changelog
+================================
+
+v0.1.1
+------
+- Leftover bucket material now carries over into the next mining job
+  instead of being flushed to a truck whenever a designation is
+  finished — e.g. the last 2 coal of a coal patch ride along into the
+  neighboring limestone designation and the next scoop tops the
+  bucket up to a full mixed load. Fixes excavators standing around
+  waiting for a truck to collect a few leftover units.
+- Only when nothing is left to mine anywhere does the excavator hand
+  its remaining bucket content to a truck (instead of the vanilla
+  cleanup destroying it).
+- On save-load, an excavator frozen waiting for a truck with a
+  partial bucket (the vanilla desync, saved mid-cycle) resumes
+  mining immediately.
+
+v0.1.0
+------
+- Initial release: excavators keep mining with a partially filled
+  bucket and only unload when the bucket is full, so every truck
+  leaves fully loaded and excavators no longer idle waiting for a
+  truck to take a few leftover units.
+- The bucket is still fully unloaded when a mining job ends (area
+  levelled, low fuel, changed product priority), so no material is
+  lost.
