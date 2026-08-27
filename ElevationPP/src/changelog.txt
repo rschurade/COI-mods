@@ -1,6 +1,15 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.11
+-------
+- Fixed the support pillars of a concrete platform staying behind
+  after the platform was cut, deleted or deconstructed (most visible
+  with blueprint-placed platforms, whose ghost pillars never went
+  away). The pillars are now re-checked like those of any other
+  elevated structure and removed, or shortened to whatever else still
+  rests on them.
+
 v0.9.10
 -------
 New building — Concrete platforms:

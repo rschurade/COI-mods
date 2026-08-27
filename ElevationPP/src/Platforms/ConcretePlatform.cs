@@ -27,7 +27,9 @@ public class ConcretePlatformProto : LayoutEntityProto, ILayoutEntityProtoWithEl
 {
     public bool CanBeElevated => true;
     /// <summary>Pillars of other structures do NOT pass through the platform: a belt above the
-    /// deck gets a pillar standing ON the deck instead (see <see cref="PlatformPillarPatch"/>).</summary>
+    /// deck gets a pillar standing ON the deck instead (see <see cref="PlatformPillarPatch"/>).
+    /// Side effect: vanilla skips the pillar re-check on removal for such protos, so the
+    /// platform's own support pillars are handed to that re-check by the same patch.</summary>
     public bool CanPillarsPassThrough => false;
 
     public override Type EntityType => typeof(ConcretePlatform);
