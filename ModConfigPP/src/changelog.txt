@@ -1,0 +1,13 @@
+ModConfig++ — Changelog
+================================
+
+v0.1.0
+------
+- Initial release: a "Mod settings" entry in the in-game menu (Esc)
+  that shows and edits the settings of every installed mod — the
+  values the running game actually uses. The base game only allows
+  editing a mod's settings while the mod is not yet part of the save.
+- Changes are validated like in the vanilla settings dialog, stored
+  in the save, and handed to the mod immediately: mods built for live
+  changes (e.g. Elevation++) apply them on the spot, other mods use
+  the new values after a save & reload. Per-mod "Restore defaults".

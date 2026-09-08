@@ -1,0 +1,14 @@
+{
+  "id": "ModConfigPP",
+  "version": "0.1.0",
+  "display_name": "ModConfig++",
+  "description_short": "Change any mod's settings from inside a running game — the base game only allows it while a mod is being added to a save.",
+  "description_long": "The base game only lets you edit a mod's settings while that mod is not yet part of the selected save: for a new game, or at the moment you add the mod to an existing save. After that the settings button in the mods window is permanently disabled and there is no way to change any mod's settings.\n\nThis mod adds a \"Mod settings\" entry to the in-game menu (Esc). It lists every installed mod that has settings and shows the values the running game actually uses — not the defaults. Changes are validated like in the vanilla settings dialog, stored in the save, and handed to the mod immediately: mods built for live changes (for example Elevation++) apply them on the spot, other mods use the new values after the game is saved and reloaded. Each mod also gets its own \"Restore defaults\" button.\n\nThe mod stores nothing itself and is safe to add to and remove from existing saves at any time.",
+  "authors": "Roest",
+  "primary_dlls": [ "0Harmony.dll", "ModConfigPP.dll" ],
+  "non_locking_dll_load": true,
+  "can_add_to_saved_game": true,
+  "can_remove_from_saved_game": true,
+  "min_game_version": "0.8.5",
+  "max_verified_game_version": "0.8.7"
+}
