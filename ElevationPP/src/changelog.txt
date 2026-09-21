@@ -1,6 +1,16 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.12
+-------
+- Fixed lifts (and other elevatable structures like balancers and
+  connectors) placed on a concrete platform being flagged "may
+  collapse due to uneven terrain" and demolished after a while: the
+  base game only accepts a support pillar directly below such a
+  structure, which on a platform is the deck itself. They now count
+  as supported by the deck and, like buildings, collapse only when
+  the platform itself goes away.
+
 v0.9.11
 -------
 - Fixed the support pillars of a concrete platform staying behind

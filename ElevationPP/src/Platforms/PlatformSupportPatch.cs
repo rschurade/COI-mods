@@ -183,12 +183,16 @@ internal static class PlatformSupportPatch
         }
     }
 
-    // 3. Watchdog: no "may collapse" while the platform is there.
+    // 3. Watchdog: no "may collapse" while the platform is there. Also covers elevatable
+    //    entities (lifts, balancers, connectors) whose pillar tiles rest on a deck — vanilla
+    //    only accepts a transport pillar in the tile below the base, which on a platform is
+    //    the deck itself, so they would be flagged and demolished.
     private static bool HeightChangePrefix(IStaticEntity entity)
     {
         try
         {
-            return !PlatformSupport.IsPlatformSupported(entity);
+            return !PlatformSupport.IsPlatformSupported(entity)
+                && !PlatformSupport.IsElevatedRestingOnDeck(entity);
         }
         catch (Exception ex)
         {

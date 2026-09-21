@@ -192,6 +192,47 @@ internal static class PlatformSupport
         return supported;
     }
 
+    /// <summary>An elevatable layout entity (lift, balancer, connector, mini-zipper, ...) standing
+    /// on a platform deck: every UsingPillar tile of its footprint either rests directly on a deck
+    /// whose top is exactly the entity's base height, or has a transport pillar in the tile below
+    /// (the vanilla support, e.g. the half of a wide entity hanging off the platform) — and at
+    /// least one tile is deck-rested. The vanilla terrain watchdog only accepts a PILLAR below the
+    /// base tile, so without this rule a lift on a deck is flagged "may collapse" and demolished.
+    /// Uncached — pillar placement can change without platforms changing.</summary>
+    public static bool IsElevatedRestingOnDeck(IStaticEntity entity)
+    {
+        if (!IsActive || !(entity is LayoutEntity layoutEntity)
+            || !(entity.Prototype is ILayoutEntityProtoWithElevation elevatable)
+            || !elevatable.CanBeElevated)
+        {
+            return false;
+        }
+        Tile2i origin = layoutEntity.CenterTile.Xy;
+        HeightTilesI baseHeight = layoutEntity.CenterTile.Height;
+        bool anyOnDeck = false;
+        foreach (OccupiedTileRelative tile in layoutEntity.OccupiedTiles)
+        {
+            if (!tile.Constraint.HasAnyConstraints(LayoutTileConstraint.UsingPillar))
+            {
+                continue;
+            }
+            Tile2i xy = origin + tile.RelCoord;
+            if (TryGetPlatformUnder(xy, baseHeight, out ConcretePlatform platform)
+                && platform.DeckTopHeight == baseHeight)
+            {
+                anyOnDeck = true;
+                continue;
+            }
+            if (s_occupancy.TryGetOccupyingEntityAt(
+                    xy.ExtendHeight(baseHeight - ThicknessTilesI.One), out TransportPillar _))
+            {
+                continue;
+            }
+            return false;
+        }
+        return anyOnDeck;
+    }
+
     /// <summary>A transport pillar standing ON a platform deck (its base tile is the deck top),
     /// as built for belts and pipes running above the platform (<see cref="PlatformPillarPatch"/>).
     /// Uncached — the query is a single occupancy lookup.</summary>
@@ -324,7 +365,8 @@ internal static class PlatformSupport
                     (origin + tile.RelCoord).ExtendHeight(top), out IStaticEntity above)
                 && !ReferenceEquals(above, platform) && !above.IsDestroyed
                 && above.ConstructionState != ConstructionState.Invalid
-                && (IsCandidateProto(above.Prototype) || above is TransportPillar))
+                && (IsCandidateProto(above.Prototype) || above is TransportPillar
+                    || (above.Prototype is ILayoutEntityProtoWithElevation elev && elev.CanBeElevated)))
             {
                 affected.Add(above);
             }
