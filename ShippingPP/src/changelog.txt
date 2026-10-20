@@ -1,6 +1,23 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.5
+------
+Fixes:
+- Saves no longer fail to load after installing or updating a mod that
+  adds cargo depots (for example Beacon & Government 1.1.1). The local
+  terminals used to be numbered by sorting all cargo depots by size, so a
+  new depot shifted the numbers and existing terminals loaded as a
+  different building. Each save now remembers which depot every local
+  terminal belongs to, and depots that appear later are added without
+  touching the existing ones.
+- Saves from older versions keep their terminals as they were, as long
+  as they are first loaded with the same depot mods they were saved
+  with. If a depot mod was added or updated in the meantime, load and
+  save once without it, then enable it again.
+- Mods can still keep their depots out of Shipping++ the way Beacon &
+  Government does for its Regional Export Yards.
+
 v0.6.4
 ------
 - Added a Russian translation. Strings added in recent versions that

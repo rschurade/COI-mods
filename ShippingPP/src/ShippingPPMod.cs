@@ -28,10 +28,13 @@ public sealed class ShippingPPMod : IMod
     public Option<IConfig> ModConfig { get; set; }
     public ModJsonConfig JsonConfig { get; }
 
-    public ShippingPPMod(ModManifest manifest)
+    /// <param name="terminalIds">The save's local terminal id map, restored by the game before
+    /// proto registration (a fresh one for a new game or a save from 0.6.4 and older).</param>
+    public ShippingPPMod(ModManifest manifest, Terminals.TerminalIdsConfig terminalIds)
     {
         Manifest = manifest;
         JsonConfig = new ModJsonConfig(this);
+        Terminals.LocalTerminalData.IdsConfig = terminalIds;
 
         // Before anything builds a string: the mod's own translations for the player's
         // language (proto names are created during proto registration, right after this).

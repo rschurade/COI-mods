@@ -108,8 +108,7 @@ internal class NavBuoyData : IModData
                 + "near the buoy, not at it."));
 
         // Toolbar: next to the local cargo terminal; unlocks with the same research.
-        var terminal = db.Get<LocalTerminalProto>(
-            new StaticEntityProto.ID("ShippingPP_LocalTerminalT1")).ValueOrNull;
+        var terminal = LocalTerminalData.SmallestVanillaTerminal;
         ImmutableArray<ToolbarEntryData> categories;
         if (terminal != null && terminal.Graphics.Categories.IsNotEmpty)
         {

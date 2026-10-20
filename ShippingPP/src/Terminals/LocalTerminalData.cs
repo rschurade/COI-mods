@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Mafi;
 using Mafi.Collections;
 using Mafi.Collections.ImmutableCollections;
@@ -11,8 +12,9 @@ using Mafi.Core.Prototypes;
 namespace ShippingPP.Terminals;
 
 /// <summary>
-/// Registers the "Local cargo terminal" tiers: one clone per vanilla cargo depot tier
-/// (2/4/6/8 module slots), re-purposed for local shipping. Model, layout, module slots, docking
+/// Registers the "Local cargo terminal" tiers: one clone per cargo depot — the vanilla tiers
+/// (2/4/6/8 module slots) and any added by other mods — re-purposed for local shipping. Which id
+/// each terminal gets is pinned per save by <see cref="TerminalIdsConfig"/>. Model, layout, module slots, docking
 /// geometry, costs and ship proto are all taken from the vanilla donor; only the proto class
 /// differs (see <see cref="LocalTerminalProto"/>), which is what the mod's patches and dispatcher
 /// key on. Each tier sits next to its donor in the toolbar and unlocks with the same research.
@@ -20,11 +22,29 @@ namespace ShippingPP.Terminals;
 /// </summary>
 internal class LocalTerminalData : IModData
 {
+    /// <summary>The terminal id map of the game being built; set by the mod's constructor, which
+    /// receives it from the save (or fresh for a new game / an older save).</summary>
+    internal static TerminalIdsConfig IdsConfig;
+
+    /// <summary>The map whose entries <see cref="registerTier"/> indexes into.</summary>
+    private static TerminalIdsConfig s_registeringIds;
+
+    /// <summary>The terminal cloned from the 2-slot vanilla depot (the navigation buoy sits next
+    /// to it in the toolbar and shares its research).</summary>
+    internal static LocalTerminalProto SmallestVanillaTerminal { get; private set; }
+
+    private static readonly CargoDepotProto.ID[] VANILLA_DEPOT_IDS =
+    {
+        Mafi.Base.Ids.Buildings.CargoDepotT1, Mafi.Base.Ids.Buildings.CargoDepotT2,
+        Mafi.Base.Ids.Buildings.CargoDepotT3, Mafi.Base.Ids.Buildings.CargoDepotT4,
+    };
+
     public void RegisterData(ProtoRegistrator registrator)
     {
         ProtosDb db = registrator.PrototypesDb;
+        SmallestVanillaTerminal = null;
 
-        // All vanilla depot tiers, smallest first (T1 = 2 slots ... T4 = 8 slots).
+        // Every cargo depot (vanilla or from another mod) gets one local terminal.
         var donors = new Lyst<CargoDepotProto>();
         foreach (CargoDepotProto depot in db.All<CargoDepotProto>())
         {
@@ -33,7 +53,6 @@ internal class LocalTerminalData : IModData
                 donors.Add(depot);
             }
         }
-        donors.Sort((a, b) => a.ModuleSlots.Length.CompareTo(b.ModuleSlots.Length));
         if (donors.IsEmpty)
         {
             Log.Warning("Shipping++: no cargo depot protos found; local terminals not registered.");
@@ -61,40 +80,98 @@ internal class LocalTerminalData : IModData
             Log.Warning("Shipping++: VehicleParts2/Steel not found; ship build cost left empty.");
         }
 
-        LocalTerminalProto previous = null;
-        CargoDepotProto previousDonor = null;
-        for (int tier = 1; tier <= donors.Count; tier++)
+        // Terminal ids are saved with the entities, so an id must mean the same donor for the
+        // whole life of a save, whatever depot mods are installed. The save carries the
+        // id -> donor map (see TerminalIdsConfig); only donors not in it yet get a new id.
+        TerminalIdsConfig ids = IdsConfig ?? new TerminalIdsConfig();
+        assignIds(ids, donors);
+
+        var terminalByDonor = new Dict<CargoDepotProto, LocalTerminalProto>();
+        for (int index = 0; index < ids.Entries.Count; index++)
         {
-            CargoDepotProto donor = donors[tier - 1];
-            LocalTerminalProto proto = registerTier(db, donor, tier);
+            KeyValuePair<string, string> entry = ids.Entries[index];
+            CargoDepotProto donor = db.Get<CargoDepotProto>(new CargoDepotProto.ID(entry.Value))
+                .ValueOrNull;
+            if (donor == null || donor is LocalTerminalProto)
+            {
+                // Kept in the map: the id comes back with its depot if the depot's mod returns.
+                Log.Warning($"Shipping++: cargo depot '{entry.Value}' of local terminal "
+                    + $"'{entry.Key}' is not installed; that terminal is not registered.");
+                continue;
+            }
+            if (terminalByDonor.ContainsKey(donor))
+            {
+                Log.Warning($"Shipping++: '{entry.Key}' maps to depot '{entry.Value}', which "
+                    + "already has a local terminal; skipped.");
+                continue;
+            }
+            s_registeringIds = ids;
+            LocalTerminalProto proto = registerTier(db, donor, index);
+            s_registeringIds = null;
             if (proto == null)
             {
                 continue;
             }
-            // Chain the tiers so the toolbar groups them into one entry with a tier popup —
-            // mirroring the donors' own topology, so the vanilla in-place upgrade button appears
-            // exactly where the vanilla depots have one (2→4 and 6→8 slots are direct upgrades
-            // with an identical footprint; 4→6 is indirect only because the quay doubles in
-            // length there). The upgrade is safe for the fleet bookkeeping: CargoDepot's
-            // TryReplaceSelf swaps the proto on the SAME entity (id preserved) and re-slots the
-            // existing module entities, so queues, berth grants, home ports, line stops and
-            // module directions all carry over.
-            if (previous != null)
-            {
-                if (ReferenceEquals(previousDonor.Upgrade.NextTier.ValueOrNull, donor))
-                {
-                    previous.SetNextTier(proto);
-                }
-                else
-                {
-                    previous.SetNextTierIndirect(proto);
-                }
-            }
             // Same one-way rules as the vanilla depots: never downgrade, never move.
             proto.Upgrade.SetCannotDowngrade();
             proto.Upgrade.SetCannotMove();
+            terminalByDonor[donor] = proto;
+        }
+
+        // Chain the terminals so the toolbar groups them into one entry with a tier popup —
+        // mirroring the donors' own topology, so the vanilla in-place upgrade button appears
+        // exactly where the depots have one. The upgrade is safe for the fleet bookkeeping:
+        // CargoDepot's TryReplaceSelf swaps the proto on the SAME entity (id preserved) and
+        // re-slots the existing module entities, so queues, berth grants, home ports, line stops
+        // and module directions all carry over.
+        //
+        // The vanilla tiers form one fixed chain, smallest first: 2→4 and 6→8 slots are direct
+        // upgrades with an identical footprint; 4→6 is indirect only because the quay doubles in
+        // length there.
+        LocalTerminalProto previous = null;
+        CargoDepotProto previousDonor = null;
+        foreach (CargoDepotProto.ID vanillaId in VANILLA_DEPOT_IDS)
+        {
+            CargoDepotProto donor = db.Get<CargoDepotProto>(vanillaId).ValueOrNull;
+            if (donor == null || !terminalByDonor.TryGetValue(donor, out LocalTerminalProto proto))
+            {
+                continue;
+            }
+            if (previous == null)
+            {
+                SmallestVanillaTerminal = proto;
+            }
+            else if (ReferenceEquals(previousDonor.Upgrade.NextTier.ValueOrNull, donor))
+            {
+                previous.SetNextTier(proto);
+            }
+            else
+            {
+                previous.SetNextTierIndirect(proto);
+            }
             previous = proto;
             previousDonor = donor;
+        }
+        // Other mods' depots are chained among themselves exactly like their donors are (never
+        // into the vanilla tiers, whose chain is fixed above).
+        foreach (KeyValuePair<CargoDepotProto, LocalTerminalProto> pair in terminalByDonor)
+        {
+            CargoDepotProto donor = pair.Key;
+            if (isVanilla(donor))
+            {
+                continue;
+            }
+            if (donor.Upgrade.NextTier.ValueOrNull is CargoDepotProto direct && !isVanilla(direct)
+                && terminalByDonor.TryGetValue(direct, out LocalTerminalProto directNext))
+            {
+                pair.Value.SetNextTier(directNext);
+            }
+            else if (donor.TierData.NextTierIndirect.ValueOrNull is CargoDepotProto indirect
+                && !isVanilla(indirect)
+                && terminalByDonor.TryGetValue(indirect, out LocalTerminalProto indirectNext))
+            {
+                pair.Value.SetNextTierIndirect(indirectNext);
+            }
         }
 
         // The module product-picker patch needs the protos db to enumerate all products.
@@ -113,8 +190,71 @@ internal class LocalTerminalData : IModData
             .BuildAndAdd();
     }
 
-    private static LocalTerminalProto registerTier(ProtosDb db, CargoDepotProto donor, int tier)
+    /// <summary>
+    /// Fills in the terminal id of every donor that has none yet. A map that is empty and not
+    /// from a save (new game, or a save from 0.6.4 or older) is first filled exactly the way
+    /// those versions numbered the terminals — all depots sorted by slot count, T1..Tn — which
+    /// keeps every old save meaning what it meant (a save with only the vanilla depots gets
+    /// T1..T4 = 2/4/6/8 slots, as always). From then on the map is frozen in the save, and depots
+    /// that appear later get an id derived from their own donor id.
+    /// </summary>
+    private static void assignIds(TerminalIdsConfig ids, Lyst<CargoDepotProto> donors)
     {
+        if (!ids.IsFromSave && ids.Entries.IsEmpty)
+        {
+            // Must stay identical to the 0.6.4 code: same donor list, same sort call.
+            var legacy = new Lyst<CargoDepotProto>(donors);
+            legacy.Sort((a, b) => a.ModuleSlots.Length.CompareTo(b.ModuleSlots.Length));
+            for (int tier = 1; tier <= legacy.Count; tier++)
+            {
+                ids.Entries.Add(Make.Kvp($"ShippingPP_LocalTerminalT{tier}",
+                    legacy[tier - 1].Id.Value));
+            }
+            Log.Info("Shipping++: no local terminal id map in this game yet; numbered the "
+                + "terminals the way 0.6.4 and older did.");
+        }
+
+        foreach (CargoDepotProto donor in donors)
+        {
+            string donorId = donor.Id.Value;
+            if (ids.Entries.Any(e => e.Value == donorId))
+            {
+                continue;
+            }
+            string id = $"ShippingPP_LocalTerminal_{donorId}";
+            for (int n = 2; ids.Entries.Any(e => e.Key == id); n++)
+            {
+                id = $"ShippingPP_LocalTerminal_{donorId}_{n}";
+            }
+            ids.Entries.Add(Make.Kvp(id, donorId));
+            Log.Info($"Shipping++: new cargo depot '{donorId}' gets local terminal id '{id}'.");
+        }
+
+        foreach (KeyValuePair<string, string> entry in ids.Entries)
+        {
+            Log.Info($"Shipping++: local terminal id '{entry.Key}' = depot '{entry.Value}'.");
+        }
+    }
+
+    private static bool isVanilla(CargoDepotProto donor)
+    {
+        return System.Array.IndexOf(VANILLA_DEPOT_IDS, donor.Id) >= 0;
+    }
+
+    /// <summary>
+    /// Registers the terminal of one donor under the id at <paramref name="entryIndex"/> of the
+    /// id map being registered. Returns null if the terminal is not registered.
+    /// </summary>
+    /// <remarks>
+    /// Other mods hook this method by name and exact signature (ProtosDb, CargoDepotProto, int)
+    /// with a Harmony prefix to keep their depots out of Shipping++ — Beacon &amp; Government
+    /// excludes its Regional Export Yards this way, letting the prefix return false so this
+    /// returns null. Keep the name and the parameter types stable.
+    /// </remarks>
+    private static LocalTerminalProto registerTier(ProtosDb db, CargoDepotProto donor,
+        int entryIndex)
+    {
+        var id = new CargoDepotProto.ID(s_registeringIds.Entries[entryIndex].Key);
         // The donor's assigned cargo ship proto id (private; the resolved CargoShipProto property
         // is not populated until proto initialization, which runs after mod registration).
         object shipIdObj = ProtoUtils.GetField(typeof(CargoDepotProto), donor, "m_cargoShipProtoId");
@@ -125,8 +265,6 @@ internal class LocalTerminalData : IModData
             return null;
         }
 
-        // T1 keeps the id the mod has used since its first release (save compatibility).
-        var id = new CargoDepotProto.ID($"ShippingPP_LocalTerminalT{tier}");
         int slots = donor.ModuleSlots.Length;
         // One translatable pattern for all four tiers; the slot count is filled in per tier.
         Proto.Str strings = Proto.CreateStr((StaticEntityProto.ID)id,
