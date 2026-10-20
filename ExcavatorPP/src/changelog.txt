@@ -1,6 +1,15 @@
 Excavator++ — Changelog
 ================================
 
+v0.1.2
+------
+- Works together with Kayser's Automatic Terrain Designations 0.9.3
+  and newer. Both mods change how a finished mining job empties the
+  bucket; with that mod installed, Excavator++ used to switch itself
+  off (excavators behaved like vanilla again). It no longer does.
+- If Excavator++ ever has to switch itself off because of another mod
+  or a game update, the log now says exactly why.
+
 v0.1.1
 ------
 - Leftover bucket material now carries over into the next mining job

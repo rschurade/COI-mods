@@ -12,7 +12,7 @@ namespace ExcavatorPP;
 
 /// <summary>
 /// Lets excavators keep mining with a partially filled bucket instead of idling until a truck
-/// has taken the leftover. Six patches that only work together (all-or-nothing):
+/// has taken the leftover. Six patches (seven Harmony hooks) that only work together (all-or-nothing):
 ///
 /// 1. Transpiler on <c>MiningJob.handleDecideMiningOnReachableTile</c>: the vanilla
 ///    "unload whenever the bucket is not empty" gate becomes "unload when the bucket is full".
@@ -29,7 +29,8 @@ namespace ExcavatorPP;
 ///    bucket. With no job (cancel flows, the final flush of patch 4) the session drains the
 ///    bucket like vanilla.
 ///
-/// 3. Transpiler on <c>MiningJob.cleanup</c>: vanilla destroys whatever is still in the bucket
+/// 3. Prefix + finalizer on <c>MiningJob.cleanup</c> with a prefix on
+///    <c>Excavator.ClearCargoImmediately</c>: vanilla destroys whatever is still in the bucket
 ///    whenever a mining job ends — harmless in vanilla (the bucket is always empty), fatal
 ///    here. The cleanup keeps the cargo instead, so the bucket content simply carries over into
 ///    the next mining job (e.g. 2 leftover coal ride along into the limestone designation next
@@ -79,6 +80,8 @@ internal static class ContinuousMiningPatch
             "handleDecideMiningOnReachableTile");
         MethodInfo loadTruck = AccessTools.Method(typeof(Excavator), "handleLoadTruck");
         MethodInfo cleanup = AccessTools.Method(typeof(MiningJob), "cleanup");
+        MethodInfo clearCargo = AccessTools.Method(typeof(Excavator),
+            nameof(Excavator.ClearCargoImmediately));
         MethodInfo tryEnqueueCleaning = AccessTools.Method(typeof(ExcavatorJobProvider),
             "tryEnqueueCleaningJobIfNotClean");
         MethodInfo waitingForTruck = AccessTools.Method(typeof(Excavator),
@@ -100,7 +103,7 @@ internal static class ContinuousMiningPatch
                 + $"(vanilla behavior kept): {ex.Message}");
             return;
         }
-        if (decideMining == null || loadTruck == null || cleanup == null
+        if (decideMining == null || loadTruck == null || cleanup == null || clearCargo == null
             || tryEnqueueCleaning == null || waitingForTruck == null || initState == null
             || s_keepTruckQueueEnabled == null)
         {
@@ -116,8 +119,12 @@ internal static class ContinuousMiningPatch
                 typeof(ContinuousMiningPatch), nameof(DecideMiningTranspiler)));
             harmony.Patch(loadTruck, transpiler: new HarmonyMethod(
                 typeof(ContinuousMiningPatch), nameof(LoadTruckTranspiler)));
-            harmony.Patch(cleanup, transpiler: new HarmonyMethod(
-                typeof(ContinuousMiningPatch), nameof(CleanupTranspiler)));
+            harmony.Patch(cleanup,
+                prefix: new HarmonyMethod(typeof(ContinuousMiningPatch), nameof(CleanupPrefix)),
+                finalizer: new HarmonyMethod(typeof(ContinuousMiningPatch),
+                    nameof(CleanupFinalizer)));
+            harmony.Patch(clearCargo, prefix: new HarmonyMethod(
+                typeof(ContinuousMiningPatch), nameof(ClearCargoPrefix)));
             harmony.Patch(tryEnqueueCleaning, prefix: new HarmonyMethod(
                 typeof(ContinuousMiningPatch), nameof(CleaningJobPrefix)));
             harmony.Patch(waitingForTruck, prefix: new HarmonyMethod(
@@ -131,8 +138,15 @@ internal static class ContinuousMiningPatch
             // The patches are only correct together: a partial application either does nothing
             // or destroys cargo at job end. Roll back everything.
             harmony.UnpatchAll(HARMONY_ID);
+            // Harmony wraps a throwing transpiler in TargetInvocationException; the inner
+            // message is the one that names the method and the mismatch.
+            Exception cause = ex;
+            while (cause.InnerException != null)
+            {
+                cause = cause.InnerException;
+            }
             Log.Error("Excavator++: failed to apply continuous mining patch, all patches "
-                + $"rolled back (vanilla behavior kept): {ex.Message}");
+                + $"rolled back (vanilla behavior kept): {cause.Message}");
         }
     }
 
@@ -186,23 +200,34 @@ internal static class ContinuousMiningPatch
     }
 
     /// <summary>
-    /// In <c>MiningJob.cleanup</c>: <c>m_excavator.ClearCargoImmediately()</c> becomes a no-op
-    /// so the bucket content survives the end of a mining job and carries over into the next.
+    /// <c>MiningJob.cleanup</c> is running (simulation is single-threaded; a depth counter in
+    /// case of nesting). Not a transpiler on purpose: other mods rewrite the
+    /// <c>ClearCargoImmediately</c> call in <c>cleanup</c> themselves (Kayser's Automatic
+    /// Terrain Designations routes it through its own method, which still calls
+    /// <c>ClearCargoImmediately</c> for excavators it does not control), so matching the call
+    /// in the IL breaks as soon as one of them patched first.
     /// </summary>
-    private static IEnumerable<CodeInstruction> CleanupTranspiler(
-        IEnumerable<CodeInstruction> instructions)
+    private static int s_inMiningCleanup;
+
+    private static void CleanupPrefix()
     {
-        var code = new List<CodeInstruction>(instructions);
-        int cleared = ReplaceCall(code,
-            AccessTools.Method(typeof(Excavator), nameof(Excavator.ClearCargoImmediately)),
-            AccessTools.Method(typeof(ContinuousMiningPatch), nameof(KeepCargoOnJobEnd)));
-        if (cleared != 1)
-        {
-            throw new InvalidOperationException("MiningJob.cleanup has "
-                + $"{cleared}x Excavator.ClearCargoImmediately (expected 1); the game code "
-                + "changed.");
-        }
-        return code;
+        s_inMiningCleanup++;
+    }
+
+    /// <summary>Finalizer, so the flag is reset even if <c>cleanup</c> throws.</summary>
+    private static void CleanupFinalizer()
+    {
+        s_inMiningCleanup--;
+    }
+
+    /// <summary>
+    /// <c>Excavator.ClearCargoImmediately</c> becomes a no-op while a mining job cleans up, so
+    /// the bucket content survives the end of a mining job and carries over into the next.
+    /// Everywhere else (cleaning job, unassign, …) it clears as vanilla.
+    /// </summary>
+    private static bool ClearCargoPrefix()
+    {
+        return s_inMiningCleanup <= 0;
     }
 
     /// <summary>Replaces the vanilla unload gate ("bucket not empty") in the decide step.</summary>
@@ -214,10 +239,6 @@ internal static class ContinuousMiningPatch
     private static bool SkipIsEmptyAssert(Excavator excavator)
     {
         return true;
-    }
-
-    private static void KeepCargoOnJobEnd(Excavator excavator)
-    {
     }
 
     /// <summary>
