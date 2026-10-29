@@ -18,8 +18,8 @@ namespace ElevationPP;
 /// vanilla 6-tile height cap. Pillars taller than that render the base plus ~6 tiles of column
 /// hanging from the rail, with a gap in between.
 ///
-/// This Harmony postfix on PillarsChunkBase.AddPillar(Tile3f, ThicknessTilesF, RelTile2f, bool,
-/// ColorRgba) stacks additional tower instances below the original until the column reaches the
+/// This Harmony postfix on PillarsChunkBase.AddPillar(Tile3f, ThicknessTilesF, RelTile2f,
+/// PillarKind, ColorRgba) stacks additional tower instances below the original until the column reaches the
 /// ground (the lowest copy may poke below terrain, which is invisible). The extra packed
 /// part-ids are appended to the returned PooledArray, so the vanilla RemovePillarParts — which
 /// iterates that array — removes them correctly when the pillar goes away, and the chunk's
@@ -28,9 +28,12 @@ namespace ElevationPP;
 ///
 /// (Transport/pipe/belt pillars are rendered tile-by-tile and need no such fix.)
 ///
-/// Everything private (the nested chunk class, the PillarPartInstanceData struct, the
-/// InstancedMeshesRenderer lists) is reached via reflection that is resolved once in TryApply;
-/// the patch is skipped gracefully when Mafi.Unity is not loaded (headless runs).
+/// Everything private (the nested chunk class, the PillarPartInstanceData struct, the PillarKind
+/// enum) is reached via reflection that is resolved once in TryApply; the renderer for a pillar's
+/// kind and the part-id packing are taken from the vanilla getRenderer/packRendererAndInstanceIds
+/// rather than mirrored, so they cannot drift (0.8.8 replaced the old preview bool with
+/// PillarKind and a third, blueprint renderer list). The patch is skipped gracefully when
+/// Mafi.Unity is not loaded (headless runs).
 /// </summary>
 internal static class RailPillarRenderPatch
 {
@@ -44,9 +47,8 @@ internal static class RailPillarRenderPatch
 
     // Resolved once in TryApply.
     private static FieldInfo s_parentRendererField;     // PillarsChunkBase.ParentRenderer
-    private static FieldInfo s_renderersField;          // PillarsChunkBase.m_renderers
-    private static FieldInfo s_previewRenderersField;   // PillarsChunkBase.m_previewRenderers
-    private static FieldInfo s_lystItemsField;          // LystStruct<...>.m_items
+    private static MethodInfo s_getRendererMethod;      // PillarsChunkBase.getRenderer(PillarKind, int)
+    private static MethodInfo s_packPartIdMethod;       // PillarsChunkBase.packRendererAndInstanceIds
     private static PropertyInfo s_instancesCountProp;   // PillarsChunkBase.InstancesCount
     private static ConstructorInfo s_instanceDataCtor;  // PillarPartInstanceData(Vector3, AngleDegrees1f, ColorRgba)
     private static MethodInfo s_addInstanceMethod;      // InstancedMeshesRenderer<...>.AddInstance
@@ -86,25 +88,27 @@ internal static class RailPillarRenderPatch
             return;
         }
 
-        MethodInfo addPillarMethod = chunkBaseType.GetMethod("AddPillar",
+        Type kindType = rendererType.GetNestedType("PillarKind", BindingFlags.NonPublic);
+        MethodInfo addPillarMethod = kindType == null ? null : chunkBaseType.GetMethod("AddPillar",
             BindingFlags.NonPublic | BindingFlags.Instance, null,
-            new[] { typeof(Tile3f), typeof(ThicknessTilesF), typeof(RelTile2f), typeof(bool), typeof(ColorRgba) },
+            new[] { typeof(Tile3f), typeof(ThicknessTilesF), typeof(RelTile2f), kindType, typeof(ColorRgba) },
             null);
         Type instanceDataType = chunkBaseType.GetNestedType("PillarPartInstanceData", BindingFlags.NonPublic);
 
         s_parentRendererField = chunkBaseType.GetField("ParentRenderer",
             BindingFlags.NonPublic | BindingFlags.Instance);
-        s_renderersField = chunkBaseType.GetField("m_renderers",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        s_previewRenderersField = chunkBaseType.GetField("m_previewRenderers",
-            BindingFlags.NonPublic | BindingFlags.Instance);
+        s_getRendererMethod = kindType == null ? null : chunkBaseType.GetMethod("getRenderer",
+            BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { kindType, typeof(int) }, null);
+        s_packPartIdMethod = kindType == null ? null : chunkBaseType.GetMethod(
+            "packRendererAndInstanceIds", BindingFlags.NonPublic | BindingFlags.Static, null,
+            new[] { typeof(int), kindType, typeof(ushort) }, null);
         s_instancesCountProp = chunkBaseType.GetProperty("InstancesCount",
             BindingFlags.Public | BindingFlags.Instance);
         s_towerMatMeshField = rendererType.GetField("m_pillarTowerMatMesh",
             BindingFlags.NonPublic | BindingFlags.Instance);
 
         if (addPillarMethod == null || instanceDataType == null || s_parentRendererField == null
-            || s_renderersField == null || s_previewRenderersField == null
+            || s_getRendererMethod == null || s_packPartIdMethod == null
             || s_instancesCountProp == null || s_instancesCountProp.GetSetMethod(nonPublic: true) == null
             || s_towerMatMeshField == null)
         {
@@ -116,12 +120,10 @@ internal static class RailPillarRenderPatch
         s_instanceDataCtor = instanceDataType.GetConstructor(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null,
             new[] { typeof(Vector3), typeof(AngleDegrees1f), typeof(ColorRgba) }, null);
-        s_lystItemsField = s_renderersField.FieldType.GetField("m_items",
-            BindingFlags.NonPublic | BindingFlags.Instance);
         s_sharedMeshLodsField = s_towerMatMeshField.FieldType.GetField("SharedMeshLods",
             BindingFlags.Public | BindingFlags.Instance);
 
-        if (s_instanceDataCtor == null || s_lystItemsField == null || s_sharedMeshLodsField == null)
+        if (s_instanceDataCtor == null || s_sharedMeshLodsField == null)
         {
             Log.Error("Elevation++: Failed to resolve rail pillar instance-data internals, " +
                       "render patch skipped. Tall rail pillars will show a gap.");
@@ -142,8 +144,10 @@ internal static class RailPillarRenderPatch
         }
     }
 
+    // The pillar kind is a private enum, so it is read boxed from __args (index 3).
     private static void AddPillarPostfix(object __instance, ref PooledArray<uint> __result,
-        Tile3f position, ThicknessTilesF height, RelTile2f direction, bool isBlueprint, ColorRgba color)
+        Tile3f position, ThicknessTilesF height, RelTile2f direction, ColorRgba color,
+        object[] __args)
     {
         try
         {
@@ -184,7 +188,9 @@ internal static class RailPillarRenderPatch
                 extraCount = MAX_EXTRA_INSTANCES;
             }
 
-            object towerRenderer = getTowerRenderer(__instance, isBlueprint);
+            object kind = __args[3];
+            object towerRenderer = s_getRendererMethod.Invoke(__instance,
+                new[] { kind, (object)TOWER_MESH_INDEX });
             if (towerRenderer == null)
             {
                 return;
@@ -214,7 +220,8 @@ internal static class RailPillarRenderPatch
                 var pos = new Vector3(basePos.x, towerY - k * step, basePos.z);
                 object data = s_instanceDataCtor.Invoke(new object[] { pos, angle, color });
                 var instanceId = (ushort)s_addInstanceMethod.Invoke(towerRenderer, new[] { data });
-                extended[oldLen + k - 1] = packPartId(TOWER_MESH_INDEX, isBlueprint, instanceId);
+                extended[oldLen + k - 1] = (uint)s_packPartIdMethod.Invoke(null,
+                    new[] { (object)TOWER_MESH_INDEX, kind, instanceId });
             }
 
             // RemovePillarParts subtracts parts.Length, so account for the extras here.
@@ -258,26 +265,5 @@ internal static class RailPillarRenderPatch
         Log.Info($"Elevation++: Rail tower mesh covers {s_towerCoverageUnits} units " +
                  $"({s_towerCoverageUnits / 2f} tiles) below the rail.");
         return s_towerCoverageUnits;
-    }
-
-    /// <summary>
-    /// Fetches m_renderers[1] / m_previewRenderers[1] (the tower InstancedMeshesRenderer).
-    /// LystStruct is a struct, but its private m_items array is shared with the boxed copy.
-    /// </summary>
-    private static object getTowerRenderer(object chunkBase, bool isBlueprint)
-    {
-        object lystBoxed = (isBlueprint ? s_previewRenderersField : s_renderersField).GetValue(chunkBase);
-        var items = (Array)s_lystItemsField.GetValue(lystBoxed);
-        if (items == null || items.Length <= TOWER_MESH_INDEX)
-        {
-            return null;
-        }
-        return items.GetValue(TOWER_MESH_INDEX);
-    }
-
-    /// <summary>Mirrors PillarsChunkBase.packRendererAndInstanceIds.</summary>
-    private static uint packPartId(int rendererIndex, bool isBlueprint, ushort instanceId)
-    {
-        return ((isBlueprint ? 1u : 0u) << 31) | (uint)(rendererIndex << 16) | instanceId;
     }
 }

@@ -1,6 +1,21 @@
 Elevation++ — Changelog
 ================================
 
+v0.9.13
+-------
+Requires game version 0.8.8 or newer.
+- Works with game version 0.8.8 (it failed to load there).
+- Elevated train station modules copy the two new 0.8.8 station
+  settings (radiation shielding and transfer timing) from their
+  vanilla original.
+- The new shielded train station has no elevated version for now:
+  its unloading pit reaches below ground, which does not fit an
+  elevated deck. A station that cannot be converted is now skipped
+  instead of stopping the whole mod from loading.
+- Tall rail pillars render without a gap again (the game changed how
+  it draws them). Pillars of tracks shown as blueprints are covered
+  now too.
+
 v0.9.12
 -------
 - Fixed lifts (and other elevatable structures like balancers and

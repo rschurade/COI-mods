@@ -80,7 +80,7 @@ internal class ElevatedStationData : IModData
                 continue;
             }
             protoToNode.TryGetValue(v, out var node);
-            Proto p = registerElevatedModule(registrator, db, v, node);
+            Proto p = tryRegister(v, () => registerElevatedModule(registrator, db, v, node));
             if (p == null)
             {
                 continue;
@@ -100,7 +100,7 @@ internal class ElevatedStationData : IModData
                 continue;
             }
             protoToNode.TryGetValue(v, out var node);
-            Proto p = registerElevatedRoot(registrator, db, v, node);
+            Proto p = tryRegister(v, () => registerElevatedRoot(registrator, db, v, node));
             if (p == null)
             {
                 continue;
@@ -116,7 +116,7 @@ internal class ElevatedStationData : IModData
                 continue;
             }
             protoToNode.TryGetValue(v, out var node);
-            Proto p = registerElevatedFuel(registrator, db, v, node);
+            Proto p = tryRegister(v, () => registerElevatedFuel(registrator, db, v, node));
             if (p == null)
             {
                 continue;
@@ -194,7 +194,10 @@ internal class ElevatedStationData : IModData
         var proto = new ElevatedStationModuleProto(
             id, strings, layout, v.Costs, trajectory, v.ProductType, v.Capacity, v.TransferPeriod,
             v.TransferQuantity, v.ConnectionCompletionPerStepWhenLoading, v.PowerConsumption,
-            ((IProtoWithAnimation)v).AnimationParams, gfx, null, null, null, cannotBeReflected: false, null, electrified);
+            ((IProtoWithAnimation)v).AnimationParams, gfx, null, null, null, cannotBeReflected: false, null, electrified,
+            // 0.8.8: radiation-shielded modules (only shielded wagons/products) and the
+            // end-of-animation transfer timing, both copied from the vanilla module.
+            v.IsRadiationShielded, v.FinishPassBeforeDisconnect);
         return addGated(db, proto, unlockedBy);
     }
 
@@ -302,6 +305,26 @@ internal class ElevatedStationData : IModData
             Log.Warning($"Elevation++: '{proto.Id}' has no unlocking research; left always-available.");
         }
         return added;
+    }
+
+    /// <summary>
+    /// Registers the elevated clone of one vanilla station proto; a proto that cannot be cloned
+    /// (e.g. a layout using custom tokens defined only in the vanilla registration, like the 0.8.8
+    /// shielded station's sunken |n| pit tiles) is skipped with a warning instead of failing the
+    /// whole mod.
+    /// </summary>
+    private static Proto tryRegister(Proto source, Func<Proto> register)
+    {
+        try
+        {
+            return register();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"Elevation++: no elevated version of '{source.Id}' ({ex.GetType().Name}: "
+                + $"{ex.Message}).");
+            return null;
+        }
     }
 
     /// <summary>

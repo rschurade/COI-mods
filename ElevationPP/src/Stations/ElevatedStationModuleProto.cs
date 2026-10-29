@@ -42,11 +42,13 @@ public class ElevatedStationModuleProto : TrainStationModuleProto, ITrainTrackMa
         Electricity powerConsumption, ImmutableArray<AnimationParams> animationParams,
         TrainStationModuleProto.Gfx graphics, RelTile1f? maxSpeedTilesPerTick,
         Duration? constructionDurationPerProduct, Upoints? boostCost, bool cannotBeReflected,
-        Predicate<ProductProto> isProductSupportedOverride, bool isElectrified)
+        Predicate<ProductProto> isProductSupportedOverride, bool isElectrified,
+        bool isRadiationShielded, bool transferAtWagonEndOfAnimation)
         : base(id, strings, layout, costs, trajectoryData, productType, capacity, transferPeriod,
             transferQuantity, connectionCompletionPerStep, powerConsumption, animationParams, graphics,
             maxSpeedTilesPerTick, constructionDurationPerProduct, boostCost, cannotBeReflected,
-            isProductSupportedOverride, isElectrified)
+            isProductSupportedOverride, isElectrified, connectionCompletionPerStepWhenUnloading: null,
+            isRadiationShielded, transferAtWagonEndOfAnimation)
     {
         // The station rests on its own footprint pillars, not on train-track pillars, so exempt
         // its track from TrainTracksCollapseHelper's "missing support -> collapse" check (the only
