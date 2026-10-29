@@ -176,24 +176,25 @@ internal static class ContinuousMiningPatch
     }
 
     /// <summary>
-    /// In <c>handleLoadTruck</c>: the second <c>m_cargo.IsEmpty</c> — the one deciding whether
-    /// the force-unload session is over after a dump — becomes
-    /// <see cref="ShouldEndUnloadSession"/>. The first one (the entry bail-out when the bucket
-    /// is already empty) stays vanilla.
+    /// In <c>handleLoadTruck</c>: the second <c>IsEmpty</c> — the one deciding whether the
+    /// force-unload session is over after a dump — becomes <see cref="ShouldEndUnloadSession"/>.
+    /// The first one (the entry bail-out when the bucket is already empty) stays vanilla. Since
+    /// 0.8.8 both are the excavator's own <c>IsEmpty</c> (the bucket became a mixed product
+    /// buffer; up to 0.8.7 they were <c>m_cargo.IsEmpty</c> on a <c>VehicleCargo</c>).
     /// </summary>
     private static IEnumerable<CodeInstruction> LoadTruckTranspiler(
         IEnumerable<CodeInstruction> instructions)
     {
         var code = new List<CodeInstruction>(instructions);
-        MethodInfo cargoIsEmpty = AccessTools.DeclaredPropertyGetter(typeof(VehicleCargo),
-            nameof(VehicleCargo.IsEmpty));
-        int total = CountCalls(code, cargoIsEmpty);
+        MethodInfo isEmpty = AccessTools.DeclaredPropertyGetter(typeof(Excavator),
+            nameof(Excavator.IsEmpty));
+        int total = CountCalls(code, isEmpty);
         if (total != 2)
         {
             throw new InvalidOperationException("handleLoadTruck has "
-                + $"{total}x VehicleCargo.IsEmpty (expected 2); the game code changed.");
+                + $"{total}x Excavator.IsEmpty (expected 2); the game code changed.");
         }
-        ReplaceCallAddingThis(code, cargoIsEmpty,
+        ReplaceCall(code, isEmpty,
             AccessTools.Method(typeof(ContinuousMiningPatch), nameof(ShouldEndUnloadSession)),
             skipOccurrences: 1);
         return code;
@@ -247,9 +248,9 @@ internal static class ContinuousMiningPatch
     /// remainder in the bucket; the decide gate or the final flush re-arm the unload whenever
     /// it is actually needed. Without a true job the bucket drains fully, as vanilla.
     /// </summary>
-    private static bool ShouldEndUnloadSession(VehicleCargo cargo, Excavator excavator)
+    private static bool ShouldEndUnloadSession(Excavator excavator)
     {
-        return cargo.IsEmpty || excavator.HasTrueJob;
+        return excavator.IsEmpty || excavator.HasTrueJob;
     }
 
     /// <summary>
@@ -324,11 +325,11 @@ internal static class ContinuousMiningPatch
 
     /// <summary>
     /// Replaces every call to <paramref name="target"/> (after skipping
-    /// <paramref name="skipOccurrences"/> of them) with `ldarg.0` + a call to the static
-    /// <paramref name="replacement"/>, which receives the original call's instance as its first
-    /// argument and the patched method's `this` as its second. Returns the replacement count.
+    /// <paramref name="skipOccurrences"/> of them) with a call to the static
+    /// <paramref name="replacement"/> taking the original call's instance as its only
+    /// argument. Returns the replacement count.
     /// </summary>
-    private static int ReplaceCallAddingThis(List<CodeInstruction> code, MethodInfo target,
+    private static int ReplaceCall(List<CodeInstruction> code, MethodInfo target,
         MethodInfo replacement, int skipOccurrences = 0)
     {
         int seen = 0;
@@ -340,32 +341,6 @@ internal static class ContinuousMiningPatch
                 continue;
             }
             if (seen++ < skipOccurrences)
-            {
-                continue;
-            }
-            var loadThis = new CodeInstruction(OpCodes.Ldarg_0);
-            loadThis.labels.AddRange(code[i].labels);
-            loadThis.blocks.AddRange(code[i].blocks);
-            code[i] = loadThis;
-            code.Insert(i + 1, new CodeInstruction(OpCodes.Call, replacement));
-            i++;
-            replaced++;
-        }
-        return replaced;
-    }
-
-    /// <summary>
-    /// Replaces every call to <paramref name="target"/> with a call to the static
-    /// <paramref name="replacement"/> taking the original call's instance as its only
-    /// argument. Returns the replacement count.
-    /// </summary>
-    private static int ReplaceCall(List<CodeInstruction> code, MethodInfo target,
-        MethodInfo replacement)
-    {
-        int replaced = 0;
-        for (int i = 0; i < code.Count; i++)
-        {
-            if (!code[i].Calls(target))
             {
                 continue;
             }

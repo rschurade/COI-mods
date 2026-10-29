@@ -1,6 +1,13 @@
 Excavator++ — Changelog
 ================================
 
+v0.1.3
+------
+Requires game version 0.8.8 or newer.
+- Works with game version 0.8.8. The game changed how the excavator
+  bucket stores its cargo, which made Excavator++ switch itself off
+  (excavators behaved like vanilla again).
+
 v0.1.2
 ------
 - Works together with Kayser's Automatic Terrain Designations 0.9.3
