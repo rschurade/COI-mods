@@ -1,6 +1,15 @@
 Shipping++ — Changelog
 ================================
 
+v0.6.6
+------
+Requires game version 0.8.8 or newer.
+- Works with game version 0.8.8 (the game renamed its keyboard
+  shortcuts, which the shipping lines manager uses for adding several
+  stops with shift held).
+- Navigation buoys have their own click area that fits the buoy, and
+  the game no longer logs a "No collider found" warning for them.
+
 v0.6.5
 ------
 Fixes:

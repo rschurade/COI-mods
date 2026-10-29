@@ -1037,7 +1037,8 @@ public class ShippingLinesManagerWindow : Window
             // an unlocking research count as unlocked from the start.
             IsVisible = unlockedProtosDb.AnyUnlocked<LocalTerminalProto>();
             toolbar.AddMainMenuButton(Txt.LinesManager_Title, this,
-                "Assets/Unity/UserInterface/Toolbar/CargoShip.svg", 221f, null);
+                "Assets/Unity/UserInterface/Toolbar/CargoShip.svg", 221f,
+                Option<Mafi.Unity.InputControl.KbHandle>.None);
             if (!IsVisible)
             {
                 m_unlockedProtosDb.OnUnlockedSetChangedForUi += onProtosUnlocked;
@@ -1240,13 +1241,13 @@ public class ShippingLinesManagerWindow : Window
                 // The stop is on the line now — recolor it, whatever happens next.
                 setHighlight(entity.Value, HIGHLIGHT_ON_LINE);
                 m_hoveredEntity = null;
-                if (!m_shortcutsManager.IsOn(m_shortcutsManager.PlaceMultiple))
+                if (!m_shortcutsManager.IsOn(Mafi.Unity.InputControl.Shortcuts.PlaceMultiple))
                 {
                     stopStopSelection(showWindow: true);
                 }
                 return true;
             }
-            if (m_shortcutsManager.IsUp(m_shortcutsManager.PlaceMultiple)
+            if (m_shortcutsManager.IsUp(Mafi.Unity.InputControl.Shortcuts.PlaceMultiple)
                 && m_selectedStopsCount > 0)
             {
                 stopStopSelection(showWindow: true);

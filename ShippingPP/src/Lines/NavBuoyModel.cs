@@ -225,6 +225,12 @@ internal static class NavBuoyModel
             makeFlat(donor, DARK),
         };
         renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+
+        // Mouse picking raycasts against colliders. Without one the model factory warns and
+        // falls back to a box of the layout footprint; a box around the buoy itself is tighter.
+        BoxCollider collider = go.AddComponent<BoxCollider>();
+        collider.center = mesh.bounds.center;
+        collider.size = mesh.bounds.size;
         return go;
     }
 
