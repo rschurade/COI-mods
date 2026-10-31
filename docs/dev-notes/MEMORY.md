@@ -1,0 +1,9 @@
+- [Build command](build-command.md) — exact MSBuild invocation (don't change it); plain build.ps1 = build+deploy, `-Release` = also writes the release zip — only for final release builds
+- [Git workflow](git-workflow.md) — monorepo D:\projects\privat\mods\coi\mods for all CoI mods (GitHub: rschurade/COI-mods); no co-author trailer; push works headless but only unsandboxed; never push via gh CLI token
+- [ElevationPP concrete platforms](elevationpp-concrete-platforms.md) — ElevationPP 0.9.10 released 2026-08-23; 0.9.11 fixed orphan pillars on removal; 0.9.12 fixed deck lifts collapsing; 0.9.13 (2026-10-29) = game 0.8.8 port
+- [Portal crossbeam asset](portal-crossbeam-asset.md) — beam shape done procedurally; only the flat material remains to improve, possibly via Discord AssetBundle (Unity 6000.3.19f1)
+- [Shipping++ mod](shippingpp-mod.md) — local-shipping mod at D:\projects\privat\mods\coi\mods\ShippingPP; 0.6.6 released 2026-10-29 for game 0.8.8 (0.6.5: save-stored terminal ids; B&G hooks registerTier — keep signature); commit only after in-game testing
+- [ModConfig++ mod](modconfigpp-mod.md) — in-game editor for any mod’s live settings at D:\projects\privat\mods\coi\mods\ModConfigPP; 0.1.0 released 2026-09-08; vanilla only allows editing while a mod is not yet in the save
+- [Excavator++ mod](excavatorpp-mod.md) — continuous-mining mod at D:\projects\privat\mods\coi\mods\ExcavatorPP; 0.1.3 released 2026-10-29 for game 0.8.8 (0.1.2: coexists with Kayser's ATD, which also patches MiningJob.cleanup); vanilla destroys leftover bucket cargo in MiningJob.cleanup/CleanExcavatorJob
+- [Vanilla UI consistency](feedback-vanilla-ui.md) — mod UI must copy vanilla managers/windows and their interactions, not custom panels
+- [Ask, don't assume](feedback-ask-dont-assume.md) — ask when unclear; research the game's existing mechanism before offering design options (refund→shipyard incident)
